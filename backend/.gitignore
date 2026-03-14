@@ -1,0 +1,5 @@
+node_modules/
+.env
+scans.log
+*.locked
+quarantine/
