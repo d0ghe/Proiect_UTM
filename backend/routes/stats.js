@@ -1,36 +1,41 @@
 const express = require('express');
-const router = express.Router();
-const os = require('os'); // Modul nativ Node.js pentru info sistem
-const verifyToken = require('../middleware/verifyToken');
 
-// Protejăm și această rută
+const verifyToken = require('../middleware/verifyToken');
+const { collectTelemetry } = require('../utils/telemetry');
+
+const router = express.Router();
+
 router.use(verifyToken);
 
-router.get('/system', (req, res) => {
-    // Calculăm memoria RAM
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-    const ramUsagePercent = ((usedMem / totalMem) * 100).toFixed(2);
-
-    // Info despre CPU
-    const cpus = os.cpus();
-    const cpuModel = cpus[0].model;
+router.get('/system', async (_req, res) => {
+  try {
+    const telemetry = await collectTelemetry();
 
     res.json({
-        cpu: {
-            model: cpuModel,
-            cores: cpus.length,
-            load: (os.loadavg()[0] * 10).toFixed(2) // Simulare load (loadavg pe Windows e mai ciudat, dar e ok pt test)
-        },
-        ram: {
-            total: (totalMem / (1024 ** 3)).toFixed(2) + " GB",
-            used: (usedMem / (1024 ** 3)).toFixed(2) + " GB",
-            percent: ramUsagePercent + "%"
-        },
-        uptime: (os.uptime() / 3600).toFixed(2) + " ore",
-        platform: os.platform()
+      success: true,
+      platform: telemetry.platform,
+      uptime: telemetry.uptime,
+      cpu_percent: telemetry.cpu.load,
+      ram_percent: telemetry.ram.percent,
+      ram_used_gb: telemetry.ram.used,
+      temperature_c: telemetry.temperature.celsius,
+      temperature_source: telemetry.temperature.source,
+      temperature_available: telemetry.temperature.available,
+      rx_rate: telemetry.network.rxRate,
+      tx_rate: telemetry.network.txRate,
+      connected_clients: telemetry.connectedClients,
+      cpu: telemetry.cpu,
+      ram: telemetry.ram,
+      network: telemetry.network,
+      temperature: telemetry.temperature,
     });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Could not collect telemetry.',
+      error: error.message,
+    });
+  }
 });
 
 module.exports = router;
