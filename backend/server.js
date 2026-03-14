@@ -10,6 +10,10 @@ app.use(express.json());
 // --- IMPORTĂM RUTELE ---
 const firewallRoutes = require('./routes/firewall');
 const authRoutes = require('./routes/auth');
+const statsRouter = require('./routes/stats');
+app.use('/api/stats', statsRouter);
+const antivirusRoutes = require('./routes/antivirus');
+app.use('/api/antivirus', antivirusRoutes);
 
 // --- LEGĂM RUTELE LA URL-URI ---
 // Orice link care începe cu /api/firewall va fi trimis către fișierul firewall.js
