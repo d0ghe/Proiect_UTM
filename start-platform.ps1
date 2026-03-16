@@ -1,7 +1,8 @@
 param(
   [switch]$ForceInstall,
   [switch]$SkipInstall,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$SkipNodeInstall
 )
 
 Set-StrictMode -Version Latest
@@ -10,6 +11,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backendDir = Join-Path $repoRoot 'backend'
 $frontendDir = Join-Path $repoRoot 'frontend'
+$backendEnvPath = Join-Path $backendDir '.env'
+$backendEnvExamplePath = Join-Path $backendDir '.env.example'
 $apiToken = 'utm-auth-token-1773500227333'
 
 function Assert-PathExists {
@@ -23,14 +26,158 @@ function Assert-PathExists {
   }
 }
 
+function Test-CommandExists {
+  param(
+    [string]$CommandName
+  )
+
+  return [bool](Get-Command $CommandName -ErrorAction SilentlyContinue)
+}
+
 function Assert-CommandExists {
   param(
     [string]$CommandName
   )
 
-  if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
+  if (-not (Test-CommandExists -CommandName $CommandName)) {
     throw "Required command not found in PATH: $CommandName"
   }
+}
+
+function Write-Step {
+  param(
+    [string]$Message
+  )
+
+  Write-Host ''
+  Write-Host "==> $Message"
+}
+
+function Refresh-ProcessPath {
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $combined = @($machinePath, $userPath) | Where-Object { $_ } | Select-Object -Unique
+  if ($combined.Count -gt 0) {
+    $env:Path = ($combined -join ';')
+  }
+}
+
+function Invoke-ExternalCommand {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments,
+    [string]$Description
+  )
+
+  $display = if ($Arguments -and $Arguments.Count -gt 0) {
+    "$FilePath $($Arguments -join ' ')"
+  } else {
+    $FilePath
+  }
+
+  if ($DryRun) {
+    Write-Host "[dry-run] Would run $Description with: $display"
+    return
+  }
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Description failed with exit code $LASTEXITCODE."
+  }
+}
+
+function Install-NodeJs {
+  if ((Test-CommandExists -CommandName 'node') -and (Test-CommandExists -CommandName 'npm.cmd')) {
+    Write-Host 'Node.js and npm are already available.'
+    return
+  }
+
+  if ($SkipNodeInstall) {
+    throw 'Node.js is required but was not found, and automatic Node.js installation was skipped.'
+  }
+
+  Write-Host 'Node.js was not found. Attempting to install Node.js LTS...'
+
+  $attempts = @(
+    @{
+      Name = 'winget'
+      Available = (Test-CommandExists -CommandName 'winget')
+      FilePath = 'winget'
+      Arguments = @(
+        'install',
+        '--id', 'OpenJS.NodeJS.LTS',
+        '-e',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--silent'
+      )
+    },
+    @{
+      Name = 'choco'
+      Available = (Test-CommandExists -CommandName 'choco')
+      FilePath = 'choco'
+      Arguments = @('install', 'nodejs-lts', '-y')
+    },
+    @{
+      Name = 'scoop'
+      Available = (Test-CommandExists -CommandName 'scoop')
+      FilePath = 'scoop'
+      Arguments = @('install', 'nodejs-lts')
+    }
+  )
+
+  $installed = $false
+  foreach ($attempt in $attempts) {
+    if (-not $attempt.Available) {
+      continue
+    }
+
+    try {
+      Invoke-ExternalCommand -FilePath $attempt.FilePath -Arguments $attempt.Arguments -Description "Node.js installation via $($attempt.Name)"
+      $installed = $true
+      break
+    } catch {
+      Write-Warning "$($attempt.Name) could not install Node.js automatically: $($_.Exception.Message)"
+    }
+  }
+
+  if (-not $installed -and -not $DryRun) {
+    throw 'Automatic Node.js installation failed. Install Node.js LTS manually from https://nodejs.org/ or enable winget/choco/scoop, then rerun this script.'
+  }
+
+  if ($DryRun) {
+    Write-Host '[dry-run] Skipping PATH refresh and Node.js verification.'
+    return
+  }
+
+  Refresh-ProcessPath
+  Start-Sleep -Seconds 2
+
+  Assert-CommandExists -CommandName 'node'
+  Assert-CommandExists -CommandName 'npm.cmd'
+  Write-Host "Node.js ready: $(node --version)"
+  Write-Host "npm ready: $(npm.cmd --version)"
+}
+
+function Ensure-BackendEnv {
+  if (Test-Path -LiteralPath $backendEnvPath) {
+    Write-Host 'Backend .env already present.'
+    return
+  }
+
+  if (-not (Test-Path -LiteralPath $backendEnvExamplePath)) {
+    Write-Warning 'No backend .env or .env.example file was found.'
+    return
+  }
+
+  if ($DryRun) {
+    Write-Host "[dry-run] Would create $backendEnvPath from $backendEnvExamplePath"
+    return
+  }
+
+  Copy-Item -LiteralPath $backendEnvExamplePath -Destination $backendEnvPath
+  Write-Host 'Created backend .env from .env.example.'
+  Write-Warning 'External features such as Hybrid Analysis require your own API key in backend/.env before they will work.'
 }
 
 function Stop-PortListeners {
@@ -96,10 +243,7 @@ function Install-Dependencies {
 
   Push-Location $ProjectDir
   try {
-    & npm.cmd $installCommand
-    if ($LASTEXITCODE -ne 0) {
-      throw "npm $installCommand failed in $ProjectDir"
-    }
+    Invoke-ExternalCommand -FilePath 'npm.cmd' -Arguments @($installCommand) -Description "$Label dependency installation"
   } finally {
     Pop-Location
   }
@@ -140,18 +284,22 @@ function Test-BackendHealth {
 
 Assert-PathExists -Path $backendDir -Label 'Backend directory'
 Assert-PathExists -Path $frontendDir -Label 'Frontend directory'
-Assert-CommandExists -CommandName 'node'
-Assert-CommandExists -CommandName 'npm.cmd'
 
-Write-Host "Preparing local stack from $repoRoot"
+Write-Step -Message "Preparing local stack from $repoRoot"
+Install-NodeJs
+Ensure-BackendEnv
 Stop-PortListeners -Ports @(5000, 5173)
+
+Write-Step -Message 'Installing project dependencies'
 Install-Dependencies -ProjectDir $backendDir -Label 'Backend'
 Install-Dependencies -ProjectDir $frontendDir -Label 'Frontend'
 
+Write-Step -Message 'Starting backend and frontend'
 $backendProcess = Start-ServiceWindow -Label 'Backend' -WorkingDir $backendDir -Command 'node server.js'
 $frontendProcess = Start-ServiceWindow -Label 'Frontend' -WorkingDir $frontendDir -Command 'npm.cmd run dev -- --host 0.0.0.0'
 
 if (-not $DryRun) {
+  Write-Step -Message 'Checking backend health'
   $backendStatus = Test-BackendHealth
   if ($backendStatus) {
     Write-Host "Backend healthy on http://localhost:5000"
