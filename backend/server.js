@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const cors = require('cors');
 const express = require('express');
@@ -25,6 +25,7 @@ app.use('/api/firewall', require('./routes/firewall'));
 app.use('/api/antivirus', require('./routes/antivirus'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/controls', require('./routes/controls'));
+app.use('/api/cleanup', require('./routes/cleanup'));
 
 app.listen(PORT, () => {
   console.log(`[+] Sentinel backend listening on http://localhost:${PORT}`);

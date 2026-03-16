@@ -1,7 +1,6 @@
 const chokidar = require('chokidar');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const notifier = require('node-notifier'); // Modulul de notificări
 
 // --- CONFIGURARE DOSARE ---
@@ -15,6 +14,17 @@ const watchTargets = [
 
 const QUARANTINE_DIR = path.join(__dirname, 'quarantine');
 if (!fs.existsSync(QUARANTINE_DIR)) fs.mkdirSync(QUARANTINE_DIR);
+const REPO_ROOT = path.resolve(__dirname, '..');
+const EICAR_MARKER = ['EICAR', 'STANDARD', 'ANTIVIRUS', 'TEST', 'FILE'].join('-');
+const ignoredRoots = [
+    QUARANTINE_DIR,
+    REPO_ROOT
+].map((entry) => path.resolve(entry));
+
+const shouldIgnorePath = (targetPath) => {
+    const resolvedPath = path.resolve(targetPath);
+    return ignoredRoots.some((entry) => resolvedPath === entry || resolvedPath.startsWith(`${entry}${path.sep}`));
+};
 
 // --- FUNCȚIA DE NOTIFICARE ---
 const notifyThreat = (fileName, threatName) => {
@@ -31,7 +41,7 @@ const notifyThreat = (fileName, threatName) => {
 // --- FUNCȚIA PRINCIPALĂ DE SCANARE ---
 const scanFile = async (filePath) => {
     const fileName = path.basename(filePath);
-    if (fileName.startsWith('~') || fileName.endsWith('.tmp')) return;
+    if (fileName.startsWith('~') || fileName.endsWith('.tmp') || shouldIgnorePath(filePath)) return;
 
     console.log(`[🔍] Scanare activă: ${fileName}`);
     if (global.stats) global.stats.files_scanned++;
@@ -44,7 +54,7 @@ const scanFile = async (filePath) => {
         let threatName = "";
 
         // Verificăm semnătura EICAR
-        if (fileContent.includes('EICAR-STANDARD-ANTIVIRUS-TEST-FILE')) {
+        if (fileContent.includes(EICAR_MARKER)) {
             isInfected = true;
             threatName = "EICAR_Test_File";
         }
@@ -81,6 +91,7 @@ const scanFile = async (filePath) => {
 const watcher = chokidar.watch(watchTargets, {
     persistent: true,
     ignoreInitial: true,
+    ignored: (targetPath) => shouldIgnorePath(targetPath),
     awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 }
 });
 

@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 
 const verifyToken = require('../middleware/verifyToken');
+const { getAnalysisJobs } = require('../store/analysisStore');
 const { getControls, getFirewallRules } = require('../store/runtimeState');
 const { readScanLogs } = require('../utils/scanLog');
 
@@ -42,11 +43,27 @@ function buildLogEvent(line, index) {
   };
 }
 
+function toEventTimestamp(value) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 router.get('/', (_req, res) => {
   const controls = getControls();
   const rules = getFirewallRules();
   const scanLogs = readScanLogs(LOG_FILE);
+  const analysisJobs = getAnalysisJobs();
   const activeRules = rules.filter((rule) => String(rule.status).toLowerCase() === 'active').length;
+  const analysisEvents = analysisJobs
+    .flatMap((job) => (Array.isArray(job.history) ? job.history : []).map((entry) => ({
+      id: `${job.id}-${entry.id}`,
+      source: entry.source || 'Hybrid Analysis',
+      severity: entry.severity || 'info',
+      title: entry.title || 'Analysis update',
+      detail: entry.detail || job.message || 'Analysis activity recorded.',
+      time: entry.time || job.updatedAt || job.createdAt,
+    })))
+    .slice(0, 12);
 
   const events = [
     {
@@ -65,10 +82,11 @@ router.get('/', (_req, res) => {
       severity: activeRules > 0 ? 'info' : 'warning',
       title: `${rules.length} firewall rules loaded`,
       detail: `${activeRules} rules are currently active on the device.`,
-      time: new Date().toISOString(),
+      time: controls.lastUpdated,
     },
     ...scanLogs.slice(0, 8).map(buildLogEvent),
-  ];
+    ...analysisEvents,
+  ].sort((left, right) => toEventTimestamp(right.time) - toEventTimestamp(left.time));
 
   res.json({ success: true, events });
 });
