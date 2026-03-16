@@ -14,9 +14,11 @@ router.get('/system', async (_req, res) => {
     res.json({
       success: true,
       platform: telemetry.platform,
+      os: telemetry.os,
       uptime: telemetry.uptime,
       cpu_percent: telemetry.cpu.load,
       ram_percent: telemetry.ram.percent,
+      gpu_percent: telemetry.gpu.usagePercent,
       ram_used_gb: telemetry.ram.used,
       temperature_c: telemetry.temperature.celsius,
       temperature_source: telemetry.temperature.source,
@@ -25,8 +27,12 @@ router.get('/system', async (_req, res) => {
       tx_rate: telemetry.network.txRate,
       connected_clients: telemetry.connectedClients,
       cpu: telemetry.cpu,
+      gpu: telemetry.gpu,
       ram: telemetry.ram,
       network: telemetry.network,
+      packets: telemetry.packets,
+      connections: telemetry.connections,
+      connectionSummary: telemetry.connectionSummary,
       temperature: telemetry.temperature,
     });
   } catch (error) {

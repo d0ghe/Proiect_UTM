@@ -3,14 +3,17 @@ import './App.css';
 
 const API_TOKEN = import.meta.env.VITE_PLATFORM_TOKEN ?? 'utm-auth-token-1773500227333';
 const POLL_INTERVAL = 8000;
+const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE_CANDIDATES = Array.from(new Set([
   import.meta.env.VITE_API_BASE_URL,
-  '/api',
-  'http://localhost:5000/api',
+  prefersDirectApi ? 'http://localhost:5000/api' : '/api',
+  prefersDirectApi ? '/api' : 'http://localhost:5000/api',
 ].filter(Boolean)));
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid-1x2' },
+  { id: 'platform', label: 'Platform', icon: 'pc-display-horizontal' },
+  { id: 'cleanup', label: 'Cleanup', icon: 'trash3' },
   { id: 'firewall', label: 'Firewall', icon: 'shield-shaded' },
   { id: 'protection', label: 'Protection', icon: 'activity' },
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
@@ -26,7 +29,8 @@ const CONTROL_META = [
   { key: 'maintenanceMode', label: 'Maintenance Mode', copy: 'Use a reduced-noise operating mode during maintenance windows.' },
 ];
 
-const EICAR_SELF_TEST_CONTENT = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+const EICAR_MARKER = ['EICAR', 'STANDARD', 'ANTIVIRUS', 'TEST', 'FILE'].join('-');
+const EICAR_SELF_TEST_CONTENT = ['X5O!P%@AP[4\\PZX54(P^)7CC)7}$', EICAR_MARKER, '!$H+H*'].join('');
 
 function buildApiUrl(pathname, baseUrl = API_BASE_CANDIDATES[0]) {
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -59,13 +63,13 @@ function formatDisplay(value, fallback = '-') {
   return value === null || value === undefined || value === '' ? fallback : String(value);
 }
 
-function formatPercent(value) {
+function formatPercent(value, fallback = '0 %') {
   const numeric = toNumber(value);
   if (numeric === undefined) {
-    return '0%';
+    return fallback;
   }
 
-  return `${numeric.toFixed(1)}%`;
+  return `${numeric.toFixed(1)} %`;
 }
 
 function formatDateTime(value) {
@@ -81,14 +85,53 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
-function formatGigabytes(value) {
-  const numeric = toNumber(value);
-  return numeric === undefined ? '0.0 GB' : `${numeric.toFixed(1)} GB`;
+function formatCompactDateTime(value) {
+  if (!value) {
+    return '-';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
-function formatInteger(value) {
+function formatGigabytes(value, fallback = '0.0 GB') {
   const numeric = toNumber(value);
-  return numeric === undefined ? '0' : `${Math.round(numeric)}`;
+  return numeric === undefined ? fallback : `${numeric.toFixed(1)} GB`;
+}
+
+function formatInteger(value, fallback = '0') {
+  const numeric = toNumber(value);
+  return numeric === undefined ? fallback : `${Math.round(numeric)}`;
+}
+
+function formatBytes(value) {
+  const numeric = toNumber(value);
+  if (numeric === undefined) {
+    return '0 B';
+  }
+
+  if (numeric < 1024) {
+    return `${Math.round(numeric)} B`;
+  }
+
+  if (numeric < 1024 ** 2) {
+    return `${(numeric / 1024).toFixed(1)} KB`;
+  }
+
+  if (numeric < 1024 ** 3) {
+    return `${(numeric / 1024 ** 2).toFixed(1)} MB`;
+  }
+
+  return `${(numeric / 1024 ** 3).toFixed(1)} GB`;
 }
 
 function formatRate(value) {
@@ -97,6 +140,50 @@ function formatRate(value) {
   }
 
   return String(value);
+}
+
+function formatPlatformVersion(osInfo) {
+  if (!osInfo) {
+    return '-';
+  }
+
+  const version = String(osInfo.version || '').trim();
+  const release = String(osInfo.release || '').trim();
+
+  if (version && release) {
+    const normalizedVersion = version.toLowerCase();
+    const normalizedRelease = release.toLowerCase();
+
+    if (normalizedVersion === normalizedRelease || normalizedVersion.includes(normalizedRelease)) {
+      return version;
+    }
+
+    if (normalizedRelease.includes(normalizedVersion)) {
+      return release;
+    }
+  }
+
+  return pickFirst(
+    [version, release].filter(Boolean).join(' ').trim(),
+    version,
+    release,
+    osInfo.family,
+    '-',
+  );
+}
+
+function formatConnectionEndpoint(address, port) {
+  const resolvedAddress = formatDisplay(address, '-');
+  const resolvedPort = formatDisplay(port, '');
+  return resolvedPort && resolvedPort !== '-' ? `${resolvedAddress}:${resolvedPort}` : resolvedAddress;
+}
+
+function sortEventsNewestFirst(events) {
+  return [...(Array.isArray(events) ? events : [])].sort((left, right) => {
+    const leftTime = new Date(left?.time || 0).getTime();
+    const rightTime = new Date(right?.time || 0).getTime();
+    return rightTime - leftTime;
+  });
 }
 
 function extractApiErrorMessage({ pathname, payload, raw, response }) {
@@ -171,6 +258,8 @@ async function requestJson(pathname, options = {}) {
 }
 
 function normalizeStatusPayload(payload) {
+  const analysis = payload?.analysis || {};
+
   return {
     ...payload,
     platform: pickFirst(payload?.platform, payload?.system, payload?.hostname),
@@ -180,6 +269,7 @@ function normalizeStatusPayload(payload) {
     uptime: pickFirst(payload?.uptime, payload?.uptime_human),
     cpu_percent: pickFirst(payload?.cpu_percent, toNumber(payload?.cpu?.load)),
     ram_percent: pickFirst(payload?.ram_percent, toNumber(payload?.ram?.percent)),
+    gpu_percent: pickFirst(payload?.gpu_percent, toNumber(payload?.gpu?.usagePercent)),
     ram_used_mb: pickFirst(payload?.ram_used_mb, payload?.ram?.used !== undefined ? Math.round(payload.ram.used * 1024) : undefined),
     rules_active: pickFirst(payload?.rules_active, payload?.firewall_rules_count),
     blocked_today: pickFirst(payload?.blocked_today, payload?.blocked_rules),
@@ -190,6 +280,10 @@ function normalizeStatusPayload(payload) {
     alerts_today: pickFirst(payload?.alerts_today, payload?.events_today),
     high_severity: pickFirst(payload?.high_severity, payload?.critical_alerts),
     rules_loaded: pickFirst(payload?.rules_loaded, payload?.firewall_rules_loaded),
+    sandbox_jobs_pending: pickFirst(payload?.sandbox_jobs_pending, (analysis.pending || 0) + (analysis.running || 0)),
+    sandbox_jobs_completed: pickFirst(payload?.sandbox_jobs_completed, analysis.completed),
+    hybrid_analysis_findings: pickFirst(payload?.hybrid_analysis_findings, (analysis.review || 0) + (analysis.malicious || 0)),
+    hybrid_analysis_available: pickFirst(payload?.hybrid_analysis_available, false),
     connected_clients: pickFirst(payload?.connected_clients, payload?.clients_online),
     rx_rate: pickFirst(payload?.rx_rate, payload?.network?.rxRate),
     tx_rate: pickFirst(payload?.tx_rate, payload?.network?.txRate),
@@ -211,8 +305,8 @@ function getSeverityClass(value) {
 
 function StatusBadge({ value }) {
   const normalized = String(value || '').toLowerCase();
-  const isActive = ['active', 'online', 'operational', 'protected', 'ready', 'live'].includes(normalized);
-  const isInactive = ['inactive', 'offline', 'paused', 'error'].includes(normalized);
+  const isActive = ['active', 'online', 'operational', 'protected', 'ready', 'live', 'clean', 'completed'].includes(normalized);
+  const isInactive = ['inactive', 'offline', 'paused', 'error', 'failed'].includes(normalized);
   const badgeClass = isActive ? 'badge-active' : isInactive ? 'badge-inactive' : 'badge-warning';
 
   return (
@@ -339,7 +433,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
       <PageHeader
         breadcrumb="Sentinel / Overview"
         title="Operations Dashboard"
-        subtitle="Live posture, runtime health, and control plane readiness for the local security stack."
+        subtitle="Live posture, runtime health, provider findings, and control plane readiness for the local security stack."
         action={(
           <>
             <span className="last-updated">
@@ -363,6 +457,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
           value={formatPercent(data?.ram_percent)}
           meta={data?.ram_used_mb ? `${formatInteger(data.ram_used_mb)} MB used` : 'memory'}
         />
+        <StatCard accent="blue" label="GPU Usage" value={formatPercent(data?.gpu_percent, 'Unavailable')} />
       </div>
 
       <div className="module-grid">
@@ -373,10 +468,30 @@ function Dashboard({ data, onNavigate, onRefresh }) {
           <div className="telemetry-grid">
             <TelemetryCard label="CPU" value={formatPercent(data?.cpu_percent)} />
             <TelemetryCard label="RAM" value={formatPercent(data?.ram_percent)} />
+            <TelemetryCard label="GPU" value={formatPercent(data?.gpu_percent, 'Unavailable')} />
             <TelemetryCard label="RX Rate" value={formatRate(data?.rx_rate)} />
             <TelemetryCard label="TX Rate" value={formatRate(data?.tx_rate)} />
-            <TelemetryCard label="Uptime" value={formatDisplay(data?.uptime, '0')} />
             <TelemetryCard label="Clients" value={formatInteger(data?.connected_clients)} />
+          </div>
+        </ModuleCard>
+
+        <ModuleCard title="Platform" tag="PLT-01" status="Ready" action="Open Platform" onAction={() => onNavigate('platform')}>
+          <p className="module-desc">
+            Review OS version and build information, open port counts, and live connection telemetry from the mini packet monitor.
+          </p>
+          <div className="module-stats-row">
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatDisplay(data?.os?.build, 'N/A')}</span>
+              <span className="mini-stat-label">Build</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatInteger(data?.connected_clients)}</span>
+              <span className="mini-stat-label">Clients</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatRate(data?.rx_rate)}</span>
+              <span className="mini-stat-label">RX Rate</span>
+            </div>
           </div>
         </ModuleCard>
 
@@ -402,7 +517,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
 
         <ModuleCard title="Protection" tag="SEC-01" status={protectionStatus} action="Open Protection" onAction={() => onNavigate('protection')}>
           <p className="module-desc">
-            Scan files, inspect recent antivirus logs, and verify what has already been moved into quarantine.
+            Scan files, enrich verdicts with Hybrid Analysis, and track Falcon Sandbox jobs without losing the current local heuristics flow.
           </p>
           <div className="module-stats-row">
             <div className="mini-stat">
@@ -410,19 +525,39 @@ function Dashboard({ data, onNavigate, onRefresh }) {
               <span className="mini-stat-label">Files Scanned</span>
             </div>
             <div className="mini-stat">
-              <span className="mini-stat-value">{formatInteger(data?.threats_found)}</span>
-              <span className="mini-stat-label">Threats Found</span>
+              <span className="mini-stat-value">{formatInteger(data?.hybrid_analysis_findings)}</span>
+              <span className="mini-stat-label">HA Findings</span>
             </div>
             <div className="mini-stat">
-              <span className="mini-stat-value">{formatInteger(data?.quarantined)}</span>
-              <span className="mini-stat-label">Quarantined</span>
+              <span className="mini-stat-value">{formatInteger(data?.sandbox_jobs_pending)}</span>
+              <span className="mini-stat-label">Sandbox Pending</span>
+            </div>
+          </div>
+        </ModuleCard>
+
+        <ModuleCard title="Cleanup" tag="CLN-01" status="Ready" action="Open Cleanup" onAction={() => onNavigate('cleanup')}>
+          <p className="module-desc">
+            Launch the native OS cleanup tool or clear temp files directly from Sentinel when you need quick maintenance.
+          </p>
+          <div className="module-stats-row">
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatDisplay(data?.os?.family, 'OS')}</span>
+              <span className="mini-stat-label">Family</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatDisplay(data?.os?.version, 'N/A')}</span>
+              <span className="mini-stat-label">Version</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatDisplay(data?.status, 'Ready')}</span>
+              <span className="mini-stat-label">System</span>
             </div>
           </div>
         </ModuleCard>
 
         <ModuleCard title="Events" tag="EVT-01" status={toNumber(data?.alerts_today) > 0 ? 'Warning' : 'Active'} action="View Events" onAction={() => onNavigate('events')}>
           <p className="module-desc">
-            Operational events combine scan activity, control changes, and rule posture into one feed for quick review.
+            Operational events combine scan activity, Hybrid Analysis jobs, control changes, and rule posture into one feed for quick review.
           </p>
           <div className="module-stats-row">
             <div className="mini-stat">
@@ -434,8 +569,8 @@ function Dashboard({ data, onNavigate, onRefresh }) {
               <span className="mini-stat-label">High Severity</span>
             </div>
             <div className="mini-stat">
-              <span className="mini-stat-value">{formatInteger(data?.rules_loaded)}</span>
-              <span className="mini-stat-label">Rules Loaded</span>
+              <span className="mini-stat-value">{formatInteger(data?.sandbox_jobs_completed)}</span>
+              <span className="mini-stat-label">Sandbox Done</span>
             </div>
           </div>
         </ModuleCard>
@@ -454,7 +589,9 @@ function Dashboard({ data, onNavigate, onRefresh }) {
               <span className="mini-stat-label">Maintenance</span>
             </div>
             <div className="mini-stat">
-              <span className="mini-stat-value">{formatDateTime(controls.lastUpdated)}</span>
+              <span className="mini-stat-value mini-stat-value--compact" title={formatDateTime(controls.lastUpdated)}>
+                {formatCompactDateTime(controls.lastUpdated)}
+              </span>
               <span className="mini-stat-label">Last Update</span>
             </div>
           </div>
@@ -621,12 +758,42 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
   );
 }
 
-function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
+function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan, onSubmitUrl }) {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [scanError, setScanError] = useState('');
+  const [selectedProviders, setSelectedProviders] = useState([]);
+  const [hybridAnalysisOptInPublic, setHybridAnalysisOptInPublic] = useState(false);
+  const [hasCustomizedProviders, setHasCustomizedProviders] = useState(false);
+  const [urlToSubmit, setUrlToSubmit] = useState('');
+  const [urlError, setUrlError] = useState('');
+  const providerSummary = data.summary?.providerSummary || {};
+  const recentJobs = Array.isArray(data.recentJobs) ? data.recentJobs : [];
+
+  useEffect(() => {
+    if (hasCustomizedProviders || !Array.isArray(data.providers) || data.providers.length === 0) {
+      return;
+    }
+
+    setSelectedProviders(
+      data.providers
+        .filter((provider) => provider.defaultSelected && provider.available !== false)
+        .map((provider) => provider.id),
+    );
+    setHybridAnalysisOptInPublic(Boolean(data.hybridAnalysisOptInPublic));
+  }, [data.hybridAnalysisOptInPublic, data.providers, hasCustomizedProviders]);
+
+  function handleProviderToggle(providerId) {
+    setHasCustomizedProviders(true);
+    setSelectedProviders((current) => (
+      current.includes(providerId)
+        ? current.filter((value) => value !== providerId)
+        : [...current, providerId]
+    ));
+  }
 
   async function handleScan(event) {
     event.preventDefault();
+    const formElement = event.currentTarget;
 
     if (selectedFiles.length === 0) {
       setScanError('Select at least one file before starting a scan.');
@@ -636,9 +803,12 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
     setScanError('');
 
     try {
-      await onScan(selectedFiles);
+      await onScan(selectedFiles, {
+        hybridAnalysisOptInPublic,
+        providers: selectedProviders,
+      });
       setSelectedFiles([]);
-      event.currentTarget.reset();
+      formElement?.reset();
     } catch (scanIssue) {
       setScanError(scanIssue.message);
     }
@@ -648,9 +818,41 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
     setScanError('');
 
     try {
-      await onRunSelfTest();
+      await onRunSelfTest({
+        hybridAnalysisOptInPublic,
+        providers: selectedProviders,
+      });
     } catch (scanIssue) {
       setScanError(scanIssue.message);
+    }
+  }
+
+  async function handleUrlSubmit(event) {
+    event.preventDefault();
+    setUrlError('');
+
+    if (!urlToSubmit.trim()) {
+      setUrlError('Enter a URL before submitting it to Falcon Sandbox.');
+      return;
+    }
+
+    try {
+      await onSubmitUrl(urlToSubmit.trim(), {
+        hybridAnalysisOptInPublic,
+      });
+      setUrlToSubmit('');
+    } catch (submitIssue) {
+      setUrlError(submitIssue.message);
+    }
+  }
+
+  async function handlePoll(jobId) {
+    setScanError('');
+
+    try {
+      await onPollAnalysis(jobId);
+    } catch (pollIssue) {
+      setScanError(pollIssue.message);
     }
   }
 
@@ -659,7 +861,7 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
       <PageHeader
         breadcrumb="Sentinel / Protection"
         title="Protection Console"
-        subtitle="Run antivirus scans, review the scan log, and inspect quarantine inventory."
+        subtitle="Run local and cloud scans, enrich results with Hybrid Analysis, and track Falcon Sandbox jobs without replacing the current protection flow."
         action={(
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
             Refresh Protection
@@ -670,8 +872,8 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
       <div className="panel-grid panel-grid--stats">
         <StatCard accent="blue" label="Total Scans" value={formatInteger(data.summary?.total)} />
         <StatCard accent="red" label="Threats Found" value={formatInteger(data.summary?.infected)} />
-        <StatCard accent="green" label="Clean Files" value={formatInteger(data.summary?.clean)} />
-        <StatCard accent="amber" label="Quarantined" value={formatInteger(data.summary?.quarantined)} />
+        <StatCard accent="amber" label="Review Queue" value={formatInteger(data.summary?.review)} />
+        <StatCard accent="blue" label="Sandbox Pending" value={formatInteger((providerSummary.pending || 0) + (providerSummary.running || 0))} />
       </div>
 
       <div className="panel-grid panel-grid--split">
@@ -698,6 +900,57 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
               Local EICAR detection works immediately. The self-test button sends the payload from browser memory, without writing it to local disk first.
             </p>
 
+            <div className="field-group field-group--wide">
+              <span className="field-label">Providers</span>
+              <div className="provider-list">
+                {Array.isArray(data.providers) && data.providers.length > 0 ? data.providers.map((provider) => {
+                  const checked = selectedProviders.includes(provider.id);
+                  const isLocked = provider.configurable === false;
+
+                  return (
+                    <label className={`provider-option ${provider.available === false ? 'provider-option--disabled' : ''}`} key={provider.id}>
+                      <div className="provider-option__top">
+                        <span className="provider-option__label">
+                          <input
+                            checked={isLocked || checked}
+                            disabled={provider.available === false || isLocked || data.scanLoading || data.urlSubmitLoading}
+                            onChange={() => handleProviderToggle(provider.id)}
+                            type="checkbox"
+                          />
+                          <strong>{provider.name}</strong>
+                        </span>
+                        <StatusBadge value={provider.enabled ? 'Ready' : provider.available ? 'Configured' : 'Unavailable'} />
+                      </div>
+                      <p className="provider-option__copy">
+                        {provider.id === 'hybrid-analysis' ? 'Quick scan uploads the file privately to Hybrid Analysis and surfaces CrowdStrike ML / Falcon verdicts when available.' : null}
+                        {provider.id === 'falcon-sandbox' ? 'Full detonation queues a persisted sandbox job and lets you poll the report for MITRE, hosts, signatures, and dropped files.' : null}
+                        {provider.id === 'malwarebazaar' ? 'Hash lookup against MalwareBazaar keeps the existing cloud verdict path in place.' : null}
+                        {provider.id === 'local-heuristic' ? 'Fast local heuristic detection always runs and remains authoritative for the EICAR self-test.' : null}
+                      </p>
+                    </label>
+                  );
+                }) : <EmptyState text="Loading provider availability..." />}
+              </div>
+            </div>
+
+            <label className="field-group field-group--wide provider-consent">
+              <span className="provider-option__label">
+                <input
+                  checked={hybridAnalysisOptInPublic}
+                  disabled={data.scanLoading || data.urlSubmitLoading}
+                  onChange={(event) => {
+                    setHasCustomizedProviders(true);
+                    setHybridAnalysisOptInPublic(event.target.checked);
+                  }}
+                  type="checkbox"
+                />
+                <strong>Allow public or community submission</strong>
+              </span>
+              <span className="provider-consent__copy">
+                Leave this off to keep Hybrid Analysis and Falcon Sandbox submissions private whenever the provider allows private processing.
+              </span>
+            </label>
+
             {(scanError || data.error) ? <p className="form-message form-message--error">{scanError || data.error}</p> : null}
 
             <div className="form-actions">
@@ -709,27 +962,113 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
               </button>
             </div>
           </form>
+        </section>
 
-          <div className="result-stack">
-            <div className="result-stack__header">
-              <p className="panel-kicker">Latest Result</p>
-              <h4>Most Recent Files</h4>
+        <section className="panel-card">
+          <div className="panel-card__header">
+            <div>
+              <p className="panel-kicker">Falcon Sandbox</p>
+              <h3>Submit URL</h3>
             </div>
+          </div>
 
-            {data.lastResults.length === 0 ? <EmptyState text="No manual scan results yet." /> : null}
+          <form className="field-grid" onSubmit={handleUrlSubmit}>
+            <label className="field-group field-group--wide">
+              <span className="field-label">URL</span>
+              <input
+                className="field-input"
+                onChange={(event) => setUrlToSubmit(event.target.value)}
+                placeholder="https://example.test/file.exe"
+                type="url"
+                value={urlToSubmit}
+              />
+            </label>
 
-            {data.lastResults.map((result) => (
-              <div className="result-item" key={`${result.filename}-${result.sha256 || result.status}`}>
+            <p className="page-note">
+              URL submission uses Falcon Sandbox and creates a persisted job you can poll from this page. Configure `HYBRID_ANALYSIS_ENVIRONMENT_ID` on the backend before using this flow.
+            </p>
+
+            {(urlError || data.urlSubmitError) ? <p className="form-message form-message--error">{urlError || data.urlSubmitError}</p> : null}
+
+            <div className="form-actions">
+              <button className="control-btn control-btn--primary" disabled={data.urlSubmitLoading} type="submit">
+                {data.urlSubmitLoading ? 'Submitting...' : 'Submit URL'}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <section className="panel-card page-section-gap">
+        <div className="panel-card__header">
+          <div>
+            <p className="panel-kicker">Latest Result</p>
+            <h3>Most Recent Files</h3>
+          </div>
+        </div>
+
+        <div className="result-stack">
+          {data.lastResults.length === 0 ? <EmptyState text="No manual scan results yet." /> : null}
+
+          {data.lastResults.map((result) => (
+            <article className="analysis-result-card" key={`${result.filename}-${result.sha256 || result.status}`}>
+              <div className="analysis-result-card__top">
                 <div className="result-item__main">
                   <strong>{result.filename}</strong>
                   <span>{result.signature || result.message || result.method}</span>
                 </div>
                 <StatusBadge value={result.status} />
               </div>
-            ))}
-          </div>
-        </section>
 
+              <div className="provider-chip-row">
+                {(Array.isArray(result.providers) ? result.providers : []).map((provider) => (
+                  <span className="meta-chip" key={`${result.filename}-${provider.id}`}>
+                    {provider.name}: {provider.verdict || provider.status}
+                  </span>
+                ))}
+              </div>
+
+              {result.hybridAnalysis?.quickScan ? (
+                <div className="analysis-inline-grid">
+                  <DataPair label="HA Verdict" value={formatDisplay(result.hybridAnalysis.quickScan.rawVerdict || result.hybridAnalysis.quickScan.verdict, '-')} />
+                  <DataPair label="Threat Score" value={formatDisplay(result.hybridAnalysis.quickScan.threatScore, '-')} />
+                  <DataPair label="Classification" value={formatDisplay(result.hybridAnalysis.quickScan.classification, '-')} />
+                  <DataPair label="Report" value={result.hybridAnalysis.quickScan.reportUrl ? 'Available' : 'Pending'} />
+                </div>
+              ) : null}
+
+              {result.sandboxJob ? (
+                <div className="analysis-job-card">
+                  <div>
+                    <p className="panel-kicker">Falcon Sandbox</p>
+                    <h4>{formatDisplay(result.sandboxJob.status, 'queued')}</h4>
+                    <p className="analysis-job-card__copy">
+                      {result.sandboxJob.verdict ? `Verdict: ${result.sandboxJob.verdict}.` : 'Waiting for a completed sandbox report.'}
+                    </p>
+                  </div>
+                  <div className="analysis-job-card__actions">
+                    <button
+                      className="control-btn control-btn--ghost"
+                      disabled={data.pollingJobId === result.sandboxJob.id}
+                      onClick={() => handlePoll(result.sandboxJob.id)}
+                      type="button"
+                    >
+                      {data.pollingJobId === result.sandboxJob.id ? 'Polling...' : 'Poll Report'}
+                    </button>
+                    {result.sandboxJob.reportUrl ? (
+                      <a className="control-btn control-btn--amber" href={result.sandboxJob.reportUrl} rel="noreferrer" target="_blank">
+                        Open Report
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <div className="panel-grid panel-grid--split">
         <section className="panel-card">
           <div className="panel-card__header">
             <div>
@@ -748,6 +1087,53 @@ function ProtectionPage({ data, onRefresh, onRunSelfTest, onScan }) {
                   <span className="meta-chip">{line.includes('STATUS: INFECTED') ? 'INFECTED' : line.includes('STATUS: REVIEW') ? 'REVIEW' : 'LOG'}</span>
                   <p>{line}</p>
                 </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="panel-card">
+          <div className="panel-card__header">
+            <div>
+              <p className="panel-kicker">Sandbox Jobs</p>
+              <h3>Recent Analysis</h3>
+            </div>
+          </div>
+
+          {recentJobs.length === 0 ? <EmptyState text="No Falcon Sandbox jobs have been created yet." /> : null}
+
+          {recentJobs.length > 0 ? (
+            <div className="result-stack">
+              {recentJobs.map((job) => (
+                <article className="analysis-job-card analysis-job-card--list" key={job.id}>
+                  <div>
+                    <p className="panel-kicker">{job.type === 'url' ? 'URL Job' : 'File Job'}</p>
+                    <h4>{formatDisplay(job.filename || job.url || job.sha256, job.id)}</h4>
+                    <p className="analysis-job-card__copy">
+                      {formatDisplay(job.message, 'Sandbox job recorded.')}
+                    </p>
+                    <div className="provider-chip-row">
+                      <span className="meta-chip">Status: {formatDisplay(job.status, 'queued')}</span>
+                      {job.verdict ? <span className="meta-chip">Verdict: {job.verdict}</span> : null}
+                      {job.environmentId ? <span className="meta-chip">Env: {job.environmentId}</span> : null}
+                    </div>
+                  </div>
+                  <div className="analysis-job-card__actions">
+                    <button
+                      className="control-btn control-btn--ghost"
+                      disabled={data.pollingJobId === job.id}
+                      onClick={() => handlePoll(job.id)}
+                      type="button"
+                    >
+                      {data.pollingJobId === job.id ? 'Polling...' : 'Poll Report'}
+                    </button>
+                    {job.reportUrl ? (
+                      <a className="control-btn control-btn--amber" href={job.reportUrl} rel="noreferrer" target="_blank">
+                        Open Report
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
               ))}
             </div>
           ) : null}
@@ -800,7 +1186,7 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
       <PageHeader
         breadcrumb="Sentinel / Telemetry"
         title="Telemetry"
-        subtitle="Detailed host runtime, CPU, memory, and interface data from the backend telemetry layer."
+        subtitle="Detailed host runtime, CPU, memory, GPU, and interface data from the backend telemetry layer."
         action={(
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
             Refresh Telemetry
@@ -812,6 +1198,7 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
         <StatCard accent="neutral" label="Platform" value={formatDisplay(telemetry.platform)} />
         <StatCard accent="blue" label="CPU Usage" value={formatPercent(telemetry.cpu_percent)} />
         <StatCard accent="blue" label="RAM Usage" value={formatPercent(telemetry.ram_percent)} />
+        <StatCard accent="blue" label="GPU Usage" value={formatPercent(telemetry.gpu_percent ?? telemetry.gpu?.usagePercent, 'Unavailable')} />
         <StatCard accent="neutral" label="Uptime" value={formatDisplay(telemetry.uptime, '0')} />
       </div>
 
@@ -850,6 +1237,21 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
             </div>
           </section>
 
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Graphics</p>
+                <h3>GPU Monitor</h3>
+              </div>
+            </div>
+            <div className="detail-grid">
+              <DataPair label="Model" value={formatDisplay(telemetry.gpu?.model, 'Unavailable')} />
+              <DataPair label="Usage" value={formatPercent(telemetry.gpu?.usagePercent, 'Unavailable')} />
+              <DataPair label="Adapters" value={formatInteger(telemetry.gpu?.controllers?.length)} />
+              <DataPair label="Source" value={formatDisplay(telemetry.gpu?.source, 'Unavailable')} />
+            </div>
+          </section>
+
           <section className="panel-card panel-card--wide">
             <div className="panel-card__header">
               <div>
@@ -859,11 +1261,13 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
             </div>
             <div className="detail-grid detail-grid--wide">
               <DataPair label="Platform" value={formatDisplay(telemetry.platform)} />
-              <DataPair label="Uptime" value={formatDisplay(telemetry.uptime, '0')} />
+              <DataPair label="Version" value={formatPlatformVersion(telemetry.os)} />
+              <DataPair label="Build" value={formatDisplay(telemetry.os?.build, 'Unavailable')} />
               <DataPair label="Interface" value={formatDisplay(telemetry.network?.iface)} />
               <DataPair label="RX Rate" value={formatRate(telemetry.rx_rate ?? telemetry.network?.rxRate)} />
               <DataPair label="TX Rate" value={formatRate(telemetry.tx_rate ?? telemetry.network?.txRate)} />
               <DataPair label="Connected Clients" value={formatInteger(telemetry.connected_clients)} />
+              <DataPair label="Incoming Packets" value={formatInteger(telemetry.packets?.rxPackets)} />
             </div>
           </section>
         </div>
@@ -872,8 +1276,243 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
   );
 }
 
+function PlatformPage({ data, error, loading, onRefresh }) {
+  const telemetry = data || {};
+  const packetStats = telemetry.packets || {};
+  const connectionSummary = telemetry.connectionSummary || {};
+  const connections = Array.isArray(telemetry.connections) ? telemetry.connections : [];
+  const normalizedVersion = String(telemetry.os?.version || '').trim().toLowerCase();
+  const normalizedRelease = String(telemetry.os?.release || '').trim().toLowerCase();
+  const showRelease = normalizedRelease && normalizedRelease !== normalizedVersion && !normalizedVersion.includes(normalizedRelease);
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        breadcrumb="Sentinel / Platform"
+        title="Platform"
+        subtitle="Operating system details, Windows version and build metadata, and a lightweight packet and port monitor."
+        action={(
+          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
+            Refresh Platform
+          </button>
+        )}
+      />
+
+      <div className="panel-grid panel-grid--stats">
+        <StatCard accent="neutral" label="Platform" value={formatDisplay(telemetry.os?.family || telemetry.platform)} />
+        <StatCard accent="blue" label="Version" value={formatPlatformVersion(telemetry.os)} />
+        <StatCard accent="neutral" label="Build" value={formatDisplay(telemetry.os?.build, 'Unavailable')} />
+        <StatCard accent="green" label="Listening Ports" value={formatInteger(connectionSummary.listening)} />
+        <StatCard accent="blue" label="Incoming Packets" value={formatInteger(packetStats.rxPackets)} />
+        <StatCard accent="blue" label="Outgoing Packets" value={formatInteger(packetStats.txPackets)} />
+      </div>
+
+      {error ? <p className="form-message form-message--error">{error}</p> : null}
+      {loading && !data ? <EmptyState text="Loading platform details..." /> : null}
+
+      {data ? (
+        <>
+          <div className="panel-grid panel-grid--split">
+            <section className="panel-card">
+              <div className="panel-card__header">
+                <div>
+                  <p className="panel-kicker">Host Identity</p>
+                  <h3>Operating System</h3>
+                </div>
+              </div>
+              <div className="detail-grid">
+                <DataPair label="Hostname" value={formatDisplay(telemetry.os?.hostname)} />
+                <DataPair label="Family" value={formatDisplay(telemetry.os?.family)} />
+                <DataPair label="Platform Key" value={formatDisplay(telemetry.os?.platformKey)} />
+                <DataPair label="Version" value={formatDisplay(telemetry.os?.version)} />
+                {showRelease ? <DataPair label="Release" value={formatDisplay(telemetry.os?.release)} /> : null}
+                <DataPair label="Build" value={formatDisplay(telemetry.os?.build, 'Unavailable')} />
+                <DataPair label="Kernel" value={formatDisplay(telemetry.os?.kernel)} />
+                <DataPair label="Architecture" value={formatDisplay(telemetry.os?.arch)} />
+              </div>
+            </section>
+
+            <section className="panel-card">
+              <div className="panel-card__header">
+                <div>
+                  <p className="panel-kicker">Mini Wireshark</p>
+                  <h3>Packet Monitor</h3>
+                </div>
+              </div>
+              <div className="detail-grid">
+                <DataPair label="Interface" value={formatDisplay(telemetry.network?.iface)} />
+                <DataPair label="RX Rate" value={formatRate(telemetry.rx_rate ?? telemetry.network?.rxRate)} />
+                <DataPair label="TX Rate" value={formatRate(telemetry.tx_rate ?? telemetry.network?.txRate)} />
+                <DataPair label="RX Bytes" value={formatBytes(packetStats.rxBytes)} />
+                <DataPair label="TX Bytes" value={formatBytes(packetStats.txBytes)} />
+                <DataPair label="Incoming Packets" value={formatInteger(packetStats.rxPackets)} />
+                <DataPair label="Outgoing Packets" value={formatInteger(packetStats.txPackets)} />
+                <DataPair label="Established" value={formatInteger(connectionSummary.established)} />
+                <DataPair label="Listening" value={formatInteger(connectionSummary.listening)} />
+                <DataPair label="Open Ports" value={connectionSummary.ports?.length ? connectionSummary.ports.join(', ') : '-'} />
+              </div>
+            </section>
+          </div>
+
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Mini Wireshark</p>
+                <h3>Connection Monitor</h3>
+              </div>
+            </div>
+
+            {connections.length === 0 ? <EmptyState text="No connection details available right now." /> : null}
+
+            {connections.length > 0 ? (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Protocol</th>
+                      <th>Local Endpoint</th>
+                      <th>Remote Endpoint</th>
+                      <th>State</th>
+                      <th>PID</th>
+                      <th>Process</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {connections.map((connection, index) => (
+                      <tr key={`${connection.protocol}-${connection.localPort}-${connection.remotePort}-${connection.pid}-${index}`}>
+                        <td>{formatDisplay(connection.protocol)}</td>
+                        <td>{formatConnectionEndpoint(connection.localAddress, connection.localPort)}</td>
+                        <td>{formatConnectionEndpoint(connection.remoteAddress, connection.remotePort)}</td>
+                        <td>{formatDisplay(connection.state)}</td>
+                        <td>{formatDisplay(connection.pid, '-')}</td>
+                        <td>{formatDisplay(connection.processName, '-')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </section>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function CleanupPage({ actionLoading, data, error, lastResult, loading, message, onClearTempFiles, onOpenNative, onRefresh, platformInfo }) {
+  const nativeAction = data?.nativeAction || {};
+  const tempTargets = Array.isArray(data?.tempTargets) ? data.tempTargets : [];
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        breadcrumb="Sentinel / Cleanup"
+        title="Cleanup"
+        subtitle="Use the native cleanup tool for this platform or clear temp files directly from the console."
+        action={(
+          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
+            Refresh Cleanup
+          </button>
+        )}
+      />
+
+      <div className="panel-grid panel-grid--stats">
+        <StatCard accent="neutral" label="Platform" value={formatDisplay(platformInfo?.family || data?.platformKey)} />
+        <StatCard accent="neutral" label="Version" value={formatPlatformVersion(platformInfo)} />
+        <StatCard accent="blue" label="Temp Targets" value={formatInteger(tempTargets.length)} />
+        <StatCard accent={nativeAction.supported ? 'green' : 'amber'} label="Native Tool" value={nativeAction.supported ? nativeAction.label : 'Unavailable'} />
+      </div>
+
+      {error ? <p className="form-message form-message--error">{error}</p> : null}
+      {message ? <p className="form-message form-message--success">{message}</p> : null}
+      {loading && !data ? <EmptyState text="Loading cleanup actions..." /> : null}
+
+      {data ? (
+        <>
+          <div className="panel-grid panel-grid--split">
+            <section className="panel-card">
+              <div className="panel-card__header">
+                <div>
+                  <p className="panel-kicker">Cleanup Actions</p>
+                  <h3>Maintenance Tools</h3>
+                </div>
+              </div>
+
+              <div className="detail-grid">
+                <DataPair label="Native Tool" value={nativeAction.supported ? nativeAction.label : 'Unavailable'} />
+                <DataPair label="Description" value={formatDisplay(nativeAction.description, 'No native cleanup action available.')} />
+                <DataPair label="Platform" value={formatDisplay(data.platformKey)} />
+              </div>
+
+              <div className="result-stack">
+                <div className="form-actions">
+                  <button
+                    className="control-btn control-btn--primary"
+                    disabled={!nativeAction.supported || actionLoading === 'native'}
+                    onClick={onOpenNative}
+                    type="button"
+                  >
+                    {actionLoading === 'native' ? 'Opening...' : nativeAction.label || 'Open Native Cleanup'}
+                  </button>
+                  <button
+                    className="control-btn control-btn--amber"
+                    disabled={actionLoading === 'temp'}
+                    onClick={onClearTempFiles}
+                    type="button"
+                  >
+                    {actionLoading === 'temp' ? 'Cleaning...' : 'Delete Temp Files'}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="panel-card">
+              <div className="panel-card__header">
+                <div>
+                  <p className="panel-kicker">Temp Locations</p>
+                  <h3>Targets</h3>
+                </div>
+              </div>
+
+              {tempTargets.length === 0 ? <EmptyState text="No temp targets were reported by the backend." /> : null}
+
+              {tempTargets.length > 0 ? (
+                <div className="stack-list">
+                  {tempTargets.map((target) => (
+                    <div className="stack-item" key={target}>
+                      <span className="meta-chip">TEMP</span>
+                      <p>{target}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          </div>
+
+          {lastResult ? (
+            <section className="panel-card">
+              <div className="panel-card__header">
+                <div>
+                  <p className="panel-kicker">Last Run</p>
+                  <h3>Cleanup Summary</h3>
+                </div>
+              </div>
+              <div className="detail-grid detail-grid--wide">
+                <DataPair label="Removed Entries" value={formatInteger(lastResult.removedEntries)} />
+                <DataPair label="Reclaimed Space" value={formatBytes(lastResult.reclaimedBytes)} />
+                <DataPair label="Completed" value={formatDateTime(lastResult.completedAt)} />
+                <DataPair label="Directories" value={formatInteger(lastResult.tempTargets?.length)} />
+              </div>
+            </section>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function EventsPage({ data, error, loading, onRefresh }) {
-  const events = data || [];
+  const events = Array.isArray(data) ? data : [];
   const critical = events.filter((event) => event.severity === 'critical').length;
   const warning = events.filter((event) => event.severity === 'warning').length;
   const info = events.filter((event) => event.severity === 'info').length;
@@ -993,11 +1632,25 @@ export default function App() {
     logs: [],
     quarantine: [],
     lastResults: [],
+    providers: [],
+    recentJobs: [],
+    hybridAnalysisOptInPublic: false,
     loading: false,
     scanLoading: false,
+    pollingJobId: '',
+    urlSubmitLoading: false,
+    urlSubmitError: '',
     error: '',
   });
   const [telemetryData, setTelemetryData] = useState({ data: null, loading: false, error: '' });
+  const [cleanupData, setCleanupData] = useState({
+    data: null,
+    loading: false,
+    actionLoading: '',
+    error: '',
+    message: '',
+    lastResult: null,
+  });
   const [eventsData, setEventsData] = useState({ events: [], loading: false, error: '' });
   const [controlsData, setControlsData] = useState({ controls: null, loading: false, savingKey: '', error: '' });
 
@@ -1026,17 +1679,24 @@ export default function App() {
   const loadProtection = useCallback(async () => {
     setProtectionData((current) => ({ ...current, loading: true, error: '' }));
     try {
-      const [summaryPayload, logsPayload, quarantinePayload] = await Promise.all([
+      const [summaryPayload, logsPayload, quarantinePayload, providersPayload] = await Promise.all([
         requestJson('/antivirus/summary'),
         requestJson('/antivirus/logs'),
         requestJson('/antivirus/quarantine'),
+        requestJson('/antivirus/providers'),
       ]);
+      const defaultPublicOptIn = Boolean(
+        providersPayload?.providers?.find((provider) => provider.id === 'hybrid-analysis')?.defaults?.publicSubmission,
+      );
 
       setProtectionData((current) => ({
         ...current,
         summary: summaryPayload?.summary || {},
         logs: logsPayload?.logs || [],
         quarantine: quarantinePayload?.files || [],
+        providers: providersPayload?.providers || [],
+        recentJobs: summaryPayload?.summary?.recentJobs || [],
+        hybridAnalysisOptInPublic: current.hybridAnalysisOptInPublic || defaultPublicOptIn,
         loading: false,
         error: '',
       }));
@@ -1055,11 +1715,26 @@ export default function App() {
     }
   }, []);
 
+  const loadCleanup = useCallback(async () => {
+    setCleanupData((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const payload = await requestJson('/cleanup');
+      setCleanupData((current) => ({
+        ...current,
+        data: payload,
+        loading: false,
+        error: '',
+      }));
+    } catch (error) {
+      setCleanupData((current) => ({ ...current, loading: false, error: error.message || 'Could not load cleanup actions.' }));
+    }
+  }, []);
+
   const loadEvents = useCallback(async () => {
     setEventsData((current) => ({ ...current, loading: true, error: '' }));
     try {
       const payload = await requestJson('/events');
-      setEventsData({ events: payload?.events || [], loading: false, error: '' });
+      setEventsData({ events: sortEventsNewestFirst(payload?.events || []), loading: false, error: '' });
     } catch (error) {
       setEventsData((current) => ({ ...current, loading: false, error: error.message || 'Could not load events.' }));
     }
@@ -1086,7 +1761,7 @@ export default function App() {
     await Promise.all([loadFirewall(), fetchDashboard(), loadEvents()]);
   }, [fetchDashboard, loadEvents, loadFirewall]);
 
-  const handleScanFiles = useCallback(async (files) => {
+  const handleScanFiles = useCallback(async (files, options = {}) => {
     setProtectionData((current) => ({ ...current, scanLoading: true, error: '' }));
     try {
       const formData = new FormData();
@@ -1094,12 +1769,22 @@ export default function App() {
         const filename = file?.name || `scan-${index + 1}.bin`;
         formData.append('files', file, filename);
       });
+      formData.append('providersSpecified', 'true');
+      (options.providers || []).forEach((provider) => {
+        formData.append('providers[]', provider);
+      });
+      formData.append('hybridAnalysisOptInPublic', String(Boolean(options.hybridAnalysisOptInPublic)));
+
       const payload = await requestJson('/antivirus/scan', { method: 'POST', body: formData });
 
       setProtectionData((current) => ({
         ...current,
         scanLoading: false,
         lastResults: payload?.results || [],
+        recentJobs: [
+          ...((payload?.results || []).map((result) => result?.sandboxJob).filter(Boolean)),
+          ...current.recentJobs,
+        ].slice(0, 8),
         error: '',
       }));
 
@@ -1111,13 +1796,103 @@ export default function App() {
     }
   }, [fetchDashboard, loadEvents, loadProtection]);
 
-  const handleRunEicarSelfTest = useCallback(async () => {
+  const handleRunEicarSelfTest = useCallback(async (options = {}) => {
     const eicarFile = new File([EICAR_SELF_TEST_CONTENT], 'eicar-self-test.txt', {
       type: 'text/plain',
     });
 
-    return handleScanFiles([eicarFile]);
+    return handleScanFiles([eicarFile], options);
   }, [handleScanFiles]);
+
+  const handleSubmitProtectionUrl = useCallback(async (url, options = {}) => {
+    setProtectionData((current) => ({ ...current, urlSubmitLoading: true, urlSubmitError: '', error: '' }));
+    try {
+      const payload = await requestJson('/antivirus/submit-url', {
+        method: 'POST',
+        body: JSON.stringify({
+          url,
+          hybridAnalysisOptInPublic: Boolean(options.hybridAnalysisOptInPublic),
+        }),
+      });
+
+      setProtectionData((current) => ({
+        ...current,
+        urlSubmitLoading: false,
+        urlSubmitError: '',
+        recentJobs: [payload?.job, ...current.recentJobs].filter(Boolean).slice(0, 8),
+      }));
+
+      await Promise.all([loadProtection(), fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setProtectionData((current) => ({
+        ...current,
+        urlSubmitLoading: false,
+        urlSubmitError: error.message || 'Could not submit URL.',
+      }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents, loadProtection]);
+
+  const handlePollAnalysis = useCallback(async (jobId) => {
+    setProtectionData((current) => ({ ...current, pollingJobId: jobId, error: '', urlSubmitError: '' }));
+    try {
+      const payload = await requestJson(`/antivirus/analysis/${jobId}/poll`, { method: 'POST' });
+      setProtectionData((current) => ({
+        ...current,
+        pollingJobId: '',
+        recentJobs: current.recentJobs.map((job) => (job.id === jobId ? payload?.job || job : job)),
+        lastResults: current.lastResults.map((result) => (
+          result?.sandboxJob?.id === jobId
+            ? {
+                ...result,
+                sandboxJob: {
+                  ...result.sandboxJob,
+                  ...payload?.job,
+                },
+              }
+            : result
+        )),
+      }));
+      await Promise.all([loadProtection(), fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setProtectionData((current) => ({ ...current, pollingJobId: '', error: error.message || 'Could not poll analysis job.' }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents, loadProtection]);
+
+  const handleOpenNativeCleanup = useCallback(async () => {
+    setCleanupData((current) => ({ ...current, actionLoading: 'native', error: '', message: '' }));
+    try {
+      const payload = await requestJson('/cleanup/open-native', { method: 'POST' });
+      setCleanupData((current) => ({
+        ...current,
+        actionLoading: '',
+        error: '',
+        message: payload?.message || 'Native cleanup launched.',
+      }));
+    } catch (error) {
+      setCleanupData((current) => ({ ...current, actionLoading: '', error: error.message || 'Could not open native cleanup.' }));
+    }
+  }, []);
+
+  const handleClearTempFiles = useCallback(async () => {
+    setCleanupData((current) => ({ ...current, actionLoading: 'temp', error: '', message: '' }));
+    try {
+      const payload = await requestJson('/cleanup/temp-files', { method: 'POST' });
+      setCleanupData((current) => ({
+        ...current,
+        actionLoading: '',
+        error: '',
+        message: payload?.message || 'Temp files removed.',
+        lastResult: payload?.result || null,
+      }));
+      await fetchDashboard();
+    } catch (error) {
+      setCleanupData((current) => ({ ...current, actionLoading: '', error: error.message || 'Could not clear temp files.' }));
+    }
+  }, [fetchDashboard]);
 
   const handleToggleControl = useCallback(async (key) => {
     const nextValue = !controlsData.controls?.[key];
@@ -1151,19 +1926,27 @@ export default function App() {
     if (activePage === 'firewall') {
       loadFirewall();
     }
+
     if (activePage === 'protection') {
       loadProtection();
     }
-    if (activePage === 'telemetry') {
+
+    if (activePage === 'telemetry' || activePage === 'platform') {
       loadTelemetry();
     }
+
+    if (activePage === 'cleanup') {
+      loadCleanup();
+    }
+
     if (activePage === 'events') {
       loadEvents();
     }
+
     if (activePage === 'controls') {
       loadControls();
     }
-  }, [activePage, loadControls, loadEvents, loadFirewall, loadProtection, loadTelemetry]);
+  }, [activePage, loadCleanup, loadControls, loadEvents, loadFirewall, loadProtection, loadTelemetry]);
 
   return (
     <div className="control-app">
@@ -1178,6 +1961,23 @@ export default function App() {
 
         {connStatus === 'connecting' ? <div className="conn-banner conn-banner--info">Connecting to backend...</div> : null}
         {activePage === 'dashboard' ? <Dashboard data={serverData} onNavigate={setActivePage} onRefresh={fetchDashboard} /> : null}
+        {activePage === 'platform' ? (
+          <PlatformPage data={telemetryData.data} error={telemetryData.error} loading={telemetryData.loading} onRefresh={loadTelemetry} />
+        ) : null}
+        {activePage === 'cleanup' ? (
+          <CleanupPage
+            actionLoading={cleanupData.actionLoading}
+            data={cleanupData.data}
+            error={cleanupData.error}
+            lastResult={cleanupData.lastResult}
+            loading={cleanupData.loading}
+            message={cleanupData.message}
+            onClearTempFiles={handleClearTempFiles}
+            onOpenNative={handleOpenNativeCleanup}
+            onRefresh={loadCleanup}
+            platformInfo={telemetryData.data?.os || serverData?.os}
+          />
+        ) : null}
         {activePage === 'firewall' ? (
           <FirewallPage
             error={firewallData.error}
@@ -1192,9 +1992,11 @@ export default function App() {
         {activePage === 'protection' ? (
           <ProtectionPage
             data={protectionData}
+            onPollAnalysis={handlePollAnalysis}
             onRefresh={loadProtection}
             onRunSelfTest={handleRunEicarSelfTest}
             onScan={handleScanFiles}
+            onSubmitUrl={handleSubmitProtectionUrl}
           />
         ) : null}
         {activePage === 'telemetry' ? (
