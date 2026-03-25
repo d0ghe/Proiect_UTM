@@ -3,6 +3,8 @@ const path = require('path');
 
 const verifyToken = require('../middleware/verifyToken');
 const { getAnalysisJobs } = require('../store/analysisStore');
+const { getContentFilterState } = require('../store/contentFilterStore');
+const { buildOverview: buildContentFilterOverview } = require('../utils/contentFilter');
 const { getControls, getFirewallRules } = require('../store/runtimeState');
 const { readScanLogs } = require('../utils/scanLog');
 
@@ -51,6 +53,7 @@ function toEventTimestamp(value) {
 router.get('/', (_req, res) => {
   const controls = getControls();
   const rules = getFirewallRules();
+  const contentFilter = buildContentFilterOverview(getContentFilterState());
   const scanLogs = readScanLogs(LOG_FILE);
   const analysisJobs = getAnalysisJobs();
   const activeRules = rules.filter((rule) => String(rule.status).toLowerCase() === 'active').length;
@@ -83,6 +86,16 @@ router.get('/', (_req, res) => {
       title: `${rules.length} firewall rules loaded`,
       detail: `${activeRules} rules are currently active on the device.`,
       time: controls.lastUpdated,
+    },
+    {
+      id: `content-filter-${contentFilter.runtime.lastApplyAt || 'idle'}`,
+      source: 'Content Filter',
+      severity: contentFilter.policy.enabled && !contentFilter.runtime.applied ? 'warning' : 'info',
+      title: contentFilter.policy.enabled ? 'Hosts policy configured' : 'Content filtering idle',
+      detail: contentFilter.policy.enabled
+        ? `${contentFilter.runtime.appliedDomainCount || 0} domains are prepared for hosts-based blocking across ${contentFilter.runtime.enabledCategoryIds.length} categories.`
+        : 'No content-filter policy is currently enforced on the hosts file.',
+      time: contentFilter.runtime.lastApplyAt || contentFilter.policy.lastUpdated || controls.lastUpdated,
     },
     ...scanLogs.slice(0, 8).map(buildLogEvent),
     ...analysisEvents,

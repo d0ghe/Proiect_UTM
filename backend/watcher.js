@@ -34,7 +34,7 @@ const notifyThreat = (fileName, threatName) => {
         icon: path.join(__dirname, 'icon-security.png'), // Opțional, dacă ai o iconiță
         sound: true, // Redă sunetul de sistem "Ping"
         wait: true,
-        appID: "UTM Sentinel Core"
+        appID: "UTM Containment Atlas"
     });
 };
 
