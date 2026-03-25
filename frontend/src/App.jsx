@@ -1,7 +1,7 @@
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import './App.css';
+import ContentFilterPage from './ContentFilterPage.jsx';
 
-const API_TOKEN = import.meta.env.VITE_PLATFORM_TOKEN ?? 'utm-auth-token-1773500227333';
 const POLL_INTERVAL = 8000;
 const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE_CANDIDATES = Array.from(new Set([
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { id: 'platform', label: 'Platform', icon: 'pc-display-horizontal' },
   { id: 'cleanup', label: 'Cleanup', icon: 'trash3' },
   { id: 'firewall', label: 'Firewall', icon: 'shield-shaded' },
+  { id: 'filtering', label: 'Filtering', icon: 'funnel' },
   { id: 'protection', label: 'Protection', icon: 'activity' },
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
   { id: 'events', label: 'Events', icon: 'terminal' },
@@ -31,6 +32,8 @@ const CONTROL_META = [
 
 const EICAR_MARKER = ['EICAR', 'STANDARD', 'ANTIVIRUS', 'TEST', 'FILE'].join('-');
 const EICAR_SELF_TEST_CONTENT = ['X5O!P%@AP[4\\PZX54(P^)7CC)7}$', EICAR_MARKER, '!$H+H*'].join('');
+let runtimeSessionToken = '';
+let runtimeSessionPromise = null;
 
 function buildApiUrl(pathname, baseUrl = API_BASE_CANDIDATES[0]) {
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -186,6 +189,85 @@ function sortEventsNewestFirst(events) {
   });
 }
 
+function setRuntimeSessionToken(token) {
+  runtimeSessionToken = token || '';
+}
+
+function buildHttpError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function requestPublicJson(pathname, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', 'application/json');
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  let lastError = null;
+
+  for (const candidateUrl of buildApiCandidates(pathname)) {
+    try {
+      const response = await fetch(candidateUrl, {
+        ...options,
+        headers,
+      });
+
+      const raw = await response.text();
+      let payload = null;
+
+      if (raw) {
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          payload = { message: raw };
+        }
+      }
+
+      if (!response.ok) {
+        throw buildHttpError(
+          typeof payload?.message === 'string' && payload.message.trim() ? payload.message.trim() : `HTTP ${response.status}`,
+          response.status,
+        );
+      }
+
+      return payload;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error(`Could not reach API endpoint ${pathname}.`);
+}
+
+async function ensureRuntimeSession(forceRefresh = false) {
+  if (!forceRefresh && runtimeSessionToken) {
+    return runtimeSessionToken;
+  }
+
+  if (!forceRefresh && runtimeSessionPromise) {
+    return runtimeSessionPromise;
+  }
+
+  runtimeSessionPromise = requestPublicJson('/session')
+    .then((payload) => {
+      const token = payload?.token;
+      if (!token) {
+        throw new Error('Backend did not return a runtime session token.');
+      }
+
+      setRuntimeSessionToken(token);
+      return token;
+    })
+    .finally(() => {
+      runtimeSessionPromise = null;
+    });
+
+  return runtimeSessionPromise;
+}
+
 function extractApiErrorMessage({ pathname, payload, raw, response }) {
   const normalizedPayloadMessage = typeof payload?.message === 'string' ? payload.message.trim() : '';
   if (normalizedPayloadMessage && !normalizedPayloadMessage.startsWith('<!DOCTYPE html>')) {
@@ -214,7 +296,7 @@ async function requestJson(pathname, options = {}) {
   const isFormData = options.body instanceof FormData;
   const headers = new Headers(options.headers || {});
   headers.set('Accept', 'application/json');
-  headers.set('Authorization', `Bearer ${API_TOKEN}`);
+  headers.set('Authorization', `Bearer ${await ensureRuntimeSession(options.forceSessionRefresh)}`);
 
   if (!isFormData && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -245,13 +327,22 @@ async function requestJson(pathname, options = {}) {
       }
 
       if (!response.ok) {
-        throw new Error(extractApiErrorMessage({ pathname, payload, raw, response }));
+        throw buildHttpError(extractApiErrorMessage({ pathname, payload, raw, response }), response.status);
       }
 
       return payload;
     } catch (error) {
       lastError = error;
     }
+  }
+
+  if ((lastError?.status === 401 || lastError?.status === 403) && !options._retriedSession) {
+    setRuntimeSessionToken('');
+    return requestJson(pathname, {
+      ...options,
+      _retriedSession: true,
+      forceSessionRefresh: true,
+    });
   }
 
   throw lastError || new Error(`Could not reach API endpoint ${pathname}.`);
@@ -287,6 +378,11 @@ function normalizeStatusPayload(payload) {
     connected_clients: pickFirst(payload?.connected_clients, payload?.clients_online),
     rx_rate: pickFirst(payload?.rx_rate, payload?.network?.rxRate),
     tx_rate: pickFirst(payload?.tx_rate, payload?.network?.txRate),
+    content_filter_enabled: pickFirst(payload?.content_filter_enabled, payload?.contentFilter?.policy?.enabled, false),
+    content_filter_domains: pickFirst(payload?.content_filter_domains, payload?.contentFilter?.runtime?.appliedDomainCount, 0),
+    content_filter_last_applied: pickFirst(payload?.content_filter_last_applied, payload?.contentFilter?.runtime?.lastApplyAt),
+    content_filter_categories: pickFirst(payload?.content_filter_categories, payload?.contentFilter?.runtime?.enabledCategoryIds?.length, 0),
+    content_filter_ready: pickFirst(payload?.content_filter_ready, payload?.contentFilter?.runtime?.environment?.supported, false),
   };
 }
 
@@ -389,11 +485,11 @@ function Sidebar({ active, onNavigate }) {
     <aside className="control-sidebar">
       <div className="sidebar-brand">
         <span className="brand-mark brand-mark--icon" aria-hidden="true">
-          <i className="bi bi-layers-fill" />
+          <i className="bi bi-bezier2" />
         </span>
         <div className="brand-copy">
-          <span className="brand-label">Sentinel Core</span>
-          <span className="brand-sub">adaptive defense workspace</span>
+          <span className="brand-label">Containment Atlas</span>
+          <span className="brand-sub">policy cartography for local defense</span>
         </div>
       </div>
 
@@ -415,7 +511,7 @@ function Sidebar({ active, onNavigate }) {
       <div className="sidebar-footer">
         <div className="sidebar-device">
           <span className="device-dot" />
-          <span className="device-name">core-fabric-01</span>
+          <span className="device-name">atlas-node-01</span>
         </div>
       </div>
     </aside>
@@ -431,9 +527,9 @@ function Dashboard({ data, onNavigate, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Overview"
-        title="Operations Dashboard"
-        subtitle="Live posture, runtime health, provider findings, and control plane readiness for the local security stack."
+        breadcrumb="Containment Atlas / Overview"
+        title="Atlas Command Surface"
+        subtitle="Runtime posture, active containment layers, provider findings, and machine health mapped into one operator workspace."
         action={(
           <>
             <span className="last-updated">
@@ -511,6 +607,34 @@ function Dashboard({ data, onNavigate, onRefresh }) {
             <div className="mini-stat">
               <span className="mini-stat-value">{formatInteger(data?.allowed_today)}</span>
               <span className="mini-stat-label">Allow Rules</span>
+            </div>
+          </div>
+        </ModuleCard>
+
+        <ModuleCard
+          title="Content Filtering"
+          tag="CF-01"
+          status={data?.content_filter_enabled ? 'Armed' : data?.content_filter_ready ? 'Ready' : 'Offline'}
+          action="Open Filtering"
+          onAction={() => onNavigate('filtering')}
+        >
+          <p className="module-desc">
+            Hosts-based containment for adult content, ads, malware, gambling, piracy, social platforms, and DNS-bypass routes.
+          </p>
+          <div className="module-stats-row">
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatInteger(data?.content_filter_domains)}</span>
+              <span className="mini-stat-label">Managed Domains</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value">{formatInteger(data?.content_filter_categories)}</span>
+              <span className="mini-stat-label">Categories</span>
+            </div>
+            <div className="mini-stat">
+              <span className="mini-stat-value mini-stat-value--compact" title={formatDateTime(data?.content_filter_last_applied)}>
+                {formatCompactDateTime(data?.content_filter_last_applied)}
+              </span>
+              <span className="mini-stat-label">Last Apply</span>
             </div>
           </div>
         </ModuleCard>
@@ -638,7 +762,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Firewall"
+        breadcrumb="Containment Atlas / Firewall"
         title="Firewall Rules"
         subtitle="Manage the ruleset that backs the backend firewall API."
         action={(
@@ -859,7 +983,7 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Protection"
+        breadcrumb="Containment Atlas / Protection"
         title="Protection Console"
         subtitle="Run local and cloud scans, enrich results with Hybrid Analysis, and track Falcon Sandbox jobs without replacing the current protection flow."
         action={(
@@ -1184,7 +1308,7 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Telemetry"
+        breadcrumb="Containment Atlas / Telemetry"
         title="Telemetry"
         subtitle="Detailed host runtime, CPU, memory, GPU, and interface data from the backend telemetry layer."
         action={(
@@ -1288,7 +1412,7 @@ function PlatformPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Platform"
+        breadcrumb="Containment Atlas / Platform"
         title="Platform"
         subtitle="Operating system details, Windows version and build metadata, and a lightweight packet and port monitor."
         action={(
@@ -1406,7 +1530,7 @@ function CleanupPage({ actionLoading, data, error, lastResult, loading, message,
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Cleanup"
+        breadcrumb="Containment Atlas / Cleanup"
         title="Cleanup"
         subtitle="Use the native cleanup tool for this platform or clear temp files directly from the console."
         action={(
@@ -1520,7 +1644,7 @@ function EventsPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Events"
+        breadcrumb="Containment Atlas / Events"
         title="Events"
         subtitle="Protection, controls, and firewall activity collected into one operational stream."
         action={(
@@ -1569,7 +1693,7 @@ function ControlsPage({ data, error, loading, onRefresh, onToggle, savingKey }) 
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Sentinel / Controls"
+        breadcrumb="Containment Atlas / Controls"
         title="Controls"
         subtitle="Toggle backend modules without leaving the console."
         action={(
@@ -1653,6 +1777,20 @@ export default function App() {
   });
   const [eventsData, setEventsData] = useState({ events: [], loading: false, error: '' });
   const [controlsData, setControlsData] = useState({ controls: null, loading: false, savingKey: '', error: '' });
+  const [contentFilterData, setContentFilterData] = useState({
+    policy: null,
+    categories: [],
+    runtime: null,
+    loading: false,
+    saving: false,
+    syncing: false,
+    applying: false,
+    removing: false,
+    checking: false,
+    error: '',
+    message: '',
+    checkResult: null,
+  });
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -1747,6 +1885,23 @@ export default function App() {
       setControlsData((current) => ({ ...current, controls: payload?.controls || null, loading: false, error: '' }));
     } catch (error) {
       setControlsData((current) => ({ ...current, loading: false, error: error.message || 'Could not load controls.' }));
+    }
+  }, []);
+
+  const loadContentFilter = useCallback(async () => {
+    setContentFilterData((current) => ({ ...current, loading: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter');
+      setContentFilterData((current) => ({
+        ...current,
+        policy: payload?.policy || null,
+        categories: payload?.categories || [],
+        runtime: payload?.runtime || null,
+        loading: false,
+        error: '',
+      }));
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, loading: false, error: error.message || 'Could not load content-filter policy.' }));
     }
   }, []);
 
@@ -1916,6 +2071,118 @@ export default function App() {
     }
   }, [controlsData.controls, fetchDashboard, loadControls, loadEvents]);
 
+  const handleSaveContentFilterPolicy = useCallback(async (policyPatch) => {
+    setContentFilterData((current) => ({ ...current, saving: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter', {
+        method: 'PATCH',
+        body: JSON.stringify(policyPatch),
+      });
+
+      setContentFilterData((current) => ({
+        ...current,
+        policy: payload?.policy || current.policy,
+        categories: payload?.categories || current.categories,
+        runtime: payload?.runtime || current.runtime,
+        saving: false,
+        error: '',
+        message: payload?.message || 'Content-filter policy updated.',
+      }));
+
+      await Promise.all([fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, saving: false, error: error.message || 'Could not save content-filter policy.' }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents]);
+
+  const handleSyncContentFilter = useCallback(async () => {
+    setContentFilterData((current) => ({ ...current, syncing: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter/sync', { method: 'POST' });
+      setContentFilterData((current) => ({
+        ...current,
+        policy: payload?.policy || current.policy,
+        categories: payload?.categories || current.categories,
+        runtime: payload?.runtime || current.runtime,
+        syncing: false,
+        error: '',
+        message: payload?.message || 'Content-filter sources synchronized.',
+      }));
+      await Promise.all([fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, syncing: false, error: error.message || 'Could not sync content-filter sources.' }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents]);
+
+  const handleApplyContentFilter = useCallback(async (policyPatch) => {
+    setContentFilterData((current) => ({ ...current, applying: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter/apply', {
+        method: 'POST',
+        body: JSON.stringify(policyPatch),
+      });
+      setContentFilterData((current) => ({
+        ...current,
+        policy: payload?.policy || current.policy,
+        categories: payload?.categories || current.categories,
+        runtime: payload?.runtime || current.runtime,
+        applying: false,
+        error: '',
+        message: payload?.message || 'Content-filter policy applied.',
+      }));
+      await Promise.all([fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, applying: false, error: error.message || 'Could not apply content-filter policy.' }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents]);
+
+  const handleRemoveContentFilter = useCallback(async () => {
+    setContentFilterData((current) => ({ ...current, removing: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter/remove', { method: 'POST' });
+      setContentFilterData((current) => ({
+        ...current,
+        policy: payload?.policy || current.policy,
+        categories: payload?.categories || current.categories,
+        runtime: payload?.runtime || current.runtime,
+        removing: false,
+        error: '',
+        message: payload?.message || 'Content-filter entries removed.',
+      }));
+      await Promise.all([fetchDashboard(), loadEvents()]);
+      return payload;
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, removing: false, error: error.message || 'Could not remove content-filter entries.' }));
+      throw error;
+    }
+  }, [fetchDashboard, loadEvents]);
+
+  const handleCheckContentFilterDomain = useCallback(async (domain) => {
+    setContentFilterData((current) => ({ ...current, checking: true, error: '', message: '' }));
+    try {
+      const payload = await requestJson('/content-filter/check', {
+        method: 'POST',
+        body: JSON.stringify({ domain }),
+      });
+      setContentFilterData((current) => ({
+        ...current,
+        checking: false,
+        error: '',
+        checkResult: payload?.result || null,
+      }));
+      return payload;
+    } catch (error) {
+      setContentFilterData((current) => ({ ...current, checking: false, error: error.message || 'Could not check the requested domain.' }));
+      throw error;
+    }
+  }, []);
+
   useEffect(() => {
     fetchDashboard();
     const intervalId = setInterval(fetchDashboard, POLL_INTERVAL);
@@ -1946,7 +2213,11 @@ export default function App() {
     if (activePage === 'controls') {
       loadControls();
     }
-  }, [activePage, loadCleanup, loadControls, loadEvents, loadFirewall, loadProtection, loadTelemetry]);
+
+    if (activePage === 'filtering') {
+      loadContentFilter();
+    }
+  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadProtection, loadTelemetry]);
 
   return (
     <div className="control-app">
@@ -1987,6 +2258,19 @@ export default function App() {
             onRefresh={loadFirewall}
             rules={firewallData.rules}
             summary={firewallData.summary}
+          />
+        ) : null}
+        {activePage === 'filtering' ? (
+          <ContentFilterPage
+            data={contentFilterData}
+            error={contentFilterData.error}
+            loading={contentFilterData.loading}
+            onApply={handleApplyContentFilter}
+            onCheck={handleCheckContentFilterDomain}
+            onRefresh={loadContentFilter}
+            onRemove={handleRemoveContentFilter}
+            onSavePolicy={handleSaveContentFilterPolicy}
+            onSync={handleSyncContentFilter}
           />
         ) : null}
         {activePage === 'protection' ? (

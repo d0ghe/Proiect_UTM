@@ -13,7 +13,6 @@ $backendDir = Join-Path $repoRoot 'backend'
 $frontendDir = Join-Path $repoRoot 'frontend'
 $backendEnvPath = Join-Path $backendDir '.env'
 $backendEnvExamplePath = Join-Path $backendDir '.env.example'
-$apiToken = 'utm-auth-token-1773500227333'
 
 function Assert-PathExists {
   param(
@@ -268,11 +267,9 @@ function Start-ServiceWindow {
 }
 
 function Test-BackendHealth {
-  $headers = @{ Authorization = "Bearer $apiToken" }
-
   for ($attempt = 1; $attempt -le 12; $attempt++) {
     try {
-      $response = Invoke-RestMethod -Uri 'http://localhost:5000/api/status' -Headers $headers -TimeoutSec 4
+      $response = Invoke-RestMethod -Uri 'http://localhost:5000/api/health' -TimeoutSec 4
       return $response
     } catch {
       Start-Sleep -Seconds 2
@@ -303,8 +300,7 @@ if (-not $DryRun) {
   $backendStatus = Test-BackendHealth
   if ($backendStatus) {
     Write-Host "Backend healthy on http://localhost:5000"
-    Write-Host "Platform: $($backendStatus.platform)"
-    Write-Host "CPU: $($backendStatus.cpu_percent)% | RAM: $($backendStatus.ram_percent)% | RX: $($backendStatus.rx_rate) | TX: $($backendStatus.tx_rate)"
+    Write-Host "Status: $($backendStatus.message)"
   } else {
     Write-Warning 'Backend did not answer in time. Check the backend PowerShell window for errors.'
   }

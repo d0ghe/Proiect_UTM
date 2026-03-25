@@ -4,7 +4,9 @@ const path = require('path');
 
 const verifyToken = require('../middleware/verifyToken');
 const { summarizeAnalysisJobs } = require('../store/analysisStore');
+const { getContentFilterState } = require('../store/contentFilterStore');
 const { collectTelemetry } = require('../utils/telemetry');
+const { buildOverview: buildContentFilterOverview } = require('../utils/contentFilter');
 const { readScanLogs, summarizeScanLogs } = require('../utils/scanLog');
 const { countActiveFirewallRules, getControls, getFirewallRules } = require('../store/runtimeState');
 const { getHybridAnalysisConfig } = require('../utils/hybridAnalysis');
@@ -33,6 +35,7 @@ router.get('/', async (_req, res) => {
     const logs = readScanLogs(LOG_FILE);
     const logSummary = summarizeScanLogs(logs);
     const analysisSummary = summarizeAnalysisJobs();
+    const contentFilter = buildContentFilterOverview(getContentFilterState());
     const quarantineCount = countQuarantinedFiles();
     const blockRules = firewallRules.filter((rule) => String(rule.action).toUpperCase() === 'BLOCK').length;
     const allowRules = firewallRules.filter((rule) => String(rule.action).toUpperCase() === 'ALLOW').length;
@@ -71,6 +74,12 @@ router.get('/', async (_req, res) => {
       connected_clients: telemetry.connectedClients,
       rx_rate: telemetry.network.rxRate,
       tx_rate: telemetry.network.txRate,
+      content_filter_enabled: contentFilter.policy.enabled,
+      content_filter_domains: contentFilter.runtime.appliedDomainCount,
+      content_filter_last_applied: contentFilter.runtime.lastApplyAt,
+      content_filter_categories: contentFilter.runtime.enabledCategoryIds.length,
+      content_filter_ready: contentFilter.runtime.environment.supported,
+      contentFilter,
       controls,
       cpu: telemetry.cpu,
       gpu: telemetry.gpu,
