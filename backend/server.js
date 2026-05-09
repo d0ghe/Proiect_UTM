@@ -1,13 +1,11 @@
 const http    = require('http');
 const cors    = require('cors');
 const express = require('express');
+const { exec } = require('child_process');
 
 const { loadRuntimeConfig }       = require('./utils/runtimeConfig');
 const { attach: attachWebSocket } = require('./utils/wsBroadcaster');
 const { startProxy, stopProxy, PROXY_PORT } = require('./utils/httpProxy');
-const { enableProxy, disableProxy } = require('./utils/systemProxy');
-const { applyOsRule }               = require('./utils/osFirewall');
-const { getFirewallRules }          = require('./store/runtimeState');
 
 global.stats = {
   files_scanned: 0,
@@ -44,41 +42,60 @@ app.use('/api/intel',          require('./routes/intelligence'));
 const server = http.createServer(app);
 attachWebSocket(server);
 
+/* ─── WinINET helpers (Chrome/Edge proxy via registry) ──────────────────── */
+
+const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+
+function run(cmd) {
+  return new Promise((resolve) => exec(cmd, resolve));
+}
+
+async function enableChromeProxy() {
+  await Promise.all([
+    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`),
+    run(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`),
+    run(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "localhost;127.0.0.1;<local>" /f`),
+  ]);
+  // Notifică Chrome să reîncarce setările imediat (fără restart browser)
+  const ps = [
+    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
+    `public class WI{[DllImport("wininet.dll")]`,
+    `public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';`,
+    `[WI]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)|Out-Null;`,
+    `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
+  ].join('');
+  await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
+  console.log(`[+] Chrome proxy setat → 127.0.0.1:${PROXY_PORT}`);
+}
+
+async function disableChromeProxy() {
+  await run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`);
+  const ps = [
+    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
+    `public class WI{[DllImport("wininet.dll")]`,
+    `public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';`,
+    `[WI]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)|Out-Null;`,
+    `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
+  ].join('');
+  await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
+  console.log('[+] Chrome proxy dezactivat — conexiune directă restaurată.');
+}
+
+/* ─── Startup ────────────────────────────────────────────────────────────── */
+
 server.listen(PORT, async () => {
   console.log(`[+] Sentinel backend  →  http://localhost:${PORT}`);
   console.log(`[+] WebSocket alerts  →  ws://localhost:${PORT}/ws/alerts`);
 
-  // Pornește proxy-ul interceptor și configurează browserele să-l folosească
   startProxy();
-  const proxyRes = await enableProxy('127.0.0.1', PROXY_PORT);
-  console.log(`[+] UTM Proxy pornit pe portul ${PROXY_PORT}`);
-  if (proxyRes.notes && proxyRes.notes.length) {
-    proxyRes.notes.forEach((n) => console.log(`    ${n}`));
-  }
-
-  // Re-aplică regulile active BLOCK în Windows Firewall via PowerShell (dacă e admin)
-  const activeBlocks = getFirewallRules().filter(
-    (r) => String(r.action).toUpperCase() === 'BLOCK' &&
-           String(r.status).toLowerCase() === 'active'
-  );
-  if (activeBlocks.length > 0) {
-    console.log(`[+] Sincronizez ${activeBlocks.length} regulă(i) BLOCK în Windows Firewall...`);
-    for (const rule of activeBlocks) {
-      const r = await applyOsRule(rule);
-      console.log(`    port ${rule.port}: ${r.message}`);
-    }
-  }
+  await enableChromeProxy();
 });
 
-// Curăță setările de proxy la oprire — evită situația "no internet"
+/* ─── Cleanup la oprire (Ctrl+C) ────────────────────────────────────────── */
+
 async function shutdown() {
-  console.log('\n[!] Oprire server — dezactivez proxy-ul din browsere...');
-  try {
-    await disableProxy();
-    console.log('[+] Proxy dezactivat. Browsere restaurate la conexiune directă.');
-  } catch (e) {
-    console.error('[!] Eroare la dezactivarea proxy-ului:', e.message);
-  }
+  console.log('\n[!] Oprire — restaurez conexiunea directă în Chrome...');
+  await disableChromeProxy();
   stopProxy(() => process.exit(0));
 }
 
