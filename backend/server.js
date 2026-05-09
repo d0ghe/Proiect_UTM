@@ -3,6 +3,9 @@ const cors    = require('cors');
 const express = require('express');
 const { exec } = require('child_process');
 
+process.on('uncaughtException',  (err) => console.error('[!] uncaughtException:', err.message));
+process.on('unhandledRejection', (err) => console.error('[!] unhandledRejection:', err?.message || err));
+
 const { loadRuntimeConfig }       = require('./utils/runtimeConfig');
 const { attach: attachWebSocket } = require('./utils/wsBroadcaster');
 const { startProxy, stopProxy, PROXY_PORT } = require('./utils/httpProxy');

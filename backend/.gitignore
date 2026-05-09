@@ -6,3 +6,5 @@ quarantine/
 store/analysis-jobs.json
 store/content-filter-policy.json
 store/content-filter-cache/
+store/geo-country-cache/
+store/geo-filter-policy.json

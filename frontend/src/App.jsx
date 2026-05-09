@@ -2352,7 +2352,10 @@ function AttackMap({ attacks }) {
   );
 }
 
-function GeoFilterPage({ data, onUpdate, onRefresh }) {
+// Countries that have community-maintained domain lists (v2fly)
+const GEO_SOURCE_COUNTRIES = new Set(['CN', 'RU', 'IR', 'VN', 'KP', 'BY', 'IN', 'TR', 'PK', 'UA']);
+
+function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
   const [search, setSearch] = useState('');
   const [attacks, setAttacks] = useState([]);
   const selected = new Set(data.blockedCountries || []);
@@ -2390,19 +2393,74 @@ function GeoFilterPage({ data, onUpdate, onRefresh }) {
     onUpdate({ enabled: !data.enabled });
   }
 
+  // Count selected countries that have domain list sources
+  const selectedWithSource = (data.blockedCountries || []).filter((c) => GEO_SOURCE_COUNTRIES.has(c));
+  const syncStatus = data.syncStatus || {};
+  const totalDomains = Object.values(syncStatus).reduce((acc, s) => acc + (s?.count || 0), 0);
+
   return (
     <div className="page-content">
       <PageHeader
         breadcrumb="Containment Atlas / Geo-Block"
         title="Geographic Blocking"
-        subtitle="Block all outbound traffic to IP ranges associated with specific countries. Blocked connections appear live on the map."
-        action={<button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>}
+        subtitle="Block all outbound traffic associated with specific countries using community-maintained domain lists and IP geolocation."
+        action={
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
+            {selectedWithSource.length > 0 && (
+              <button
+                className="control-btn"
+                disabled={data.syncing}
+                onClick={onSync}
+                type="button"
+                style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}
+              >
+                {data.syncing ? 'Syncing…' : 'Sync Domain Lists'}
+              </button>
+            )}
+          </div>
+        }
       />
 
       {data.error ? <p style={{ color: '#ff453a', marginBottom: '1rem' }}>{data.error}</p> : null}
 
       {/* Harta */}
       <AttackMap attacks={attacks} />
+
+      {/* Sync status banner */}
+      {selectedWithSource.length > 0 && (
+        <div style={{ marginBottom: '1rem', padding: '0.85rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px', fontSize: '0.82rem', color: '#a0a0a0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <span>
+              Domain lists: <strong style={{ color: '#e8e8e8' }}>{totalDomains.toLocaleString()} domains</strong> loaded across {Object.keys(syncStatus).length} {Object.keys(syncStatus).length === 1 ? 'country' : 'countries'}.
+              {totalDomains === 0 && <span style={{ color: '#f5a623', marginLeft: '0.5rem' }}>Click "Sync Domain Lists" to download them.</span>}
+            </span>
+          </div>
+          {selectedWithSource.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.6rem' }}>
+              {selectedWithSource.map((code) => {
+                const s = syncStatus[code];
+                const hasList = s?.count > 0;
+                const hasError = s?.error && !hasList;
+                return (
+                  <span
+                    key={code}
+                    style={{
+                      padding: '0.2rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem',
+                      background: hasError ? 'rgba(255,69,58,0.12)' : hasList ? 'rgba(52,199,89,0.1)' : 'rgba(245,166,35,0.1)',
+                      border: `1px solid ${hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623'}`,
+                      color: hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623',
+                    }}
+                    title={hasError ? s.error : hasList ? `${s.count.toLocaleString()} domains · synced ${new Date(s.lastSync).toLocaleString()}` : 'No cache — sync required'}
+                  >
+                    {countryFlag(code)} {code}: {hasList ? `${(s.count / 1000).toFixed(1)}k` : hasError ? 'error' : 'no cache'}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Enable toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
@@ -2434,9 +2492,12 @@ function GeoFilterPage({ data, onUpdate, onRefresh }) {
       />
 
       {/* Country grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.6rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.6rem' }}>
         {filtered.map((c) => {
           const active = selected.has(c.code);
+          const hasSource = GEO_SOURCE_COUNTRIES.has(c.code);
+          const ss = syncStatus[c.code];
+          const domainCount = ss?.count || 0;
           return (
             <button
               key={c.code}
@@ -2454,8 +2515,21 @@ function GeoFilterPage({ data, onUpdate, onRefresh }) {
               }}
             >
               <span style={{ fontSize: '1.2rem' }}>{countryFlag(c.code)}</span>
-              <span>{c.name}</span>
-              <span style={{ marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.5 }}>{c.code}</span>
+              <span style={{ flex: 1 }}>{c.name}</span>
+              <span style={{ fontSize: '0.7rem', opacity: 0.5 }}>{c.code}</span>
+              {hasSource && active && (
+                <span
+                  style={{
+                    fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '3px',
+                    background: domainCount > 0 ? 'rgba(52,199,89,0.15)' : 'rgba(245,166,35,0.15)',
+                    color: domainCount > 0 ? '#34c759' : '#f5a623',
+                    border: `1px solid ${domainCount > 0 ? '#34c759' : '#f5a623'}`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {domainCount > 0 ? `${(domainCount / 1000).toFixed(0)}k` : 'sync'}
+                </span>
+              )}
             </button>
           );
         })}
@@ -2525,7 +2599,7 @@ export default function App() {
     message: '',
     checkResult: null,
   });
-  const [geoFilterData, setGeoFilterData] = useState({ enabled: false, blockedCountries: [], loading: false, saving: false, error: '', checkResult: null });
+  const [geoFilterData, setGeoFilterData] = useState({ enabled: false, blockedCountries: [], loading: false, saving: false, syncing: false, syncStatus: {}, error: '', checkResult: null });
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -3016,8 +3090,17 @@ export default function App() {
   const loadGeoFilter = useCallback(async () => {
     setGeoFilterData((c) => ({ ...c, loading: true, error: '' }));
     try {
-      const payload = await requestJson('/geo-filter');
-      setGeoFilterData((c) => ({ ...c, enabled: Boolean(payload?.enabled), blockedCountries: payload?.blockedCountries || [], loading: false }));
+      const [payload, statusPayload] = await Promise.all([
+        requestJson('/geo-filter'),
+        requestJson('/geo-filter/sync-status').catch(() => null),
+      ]);
+      setGeoFilterData((c) => ({
+        ...c,
+        enabled: Boolean(payload?.enabled),
+        blockedCountries: payload?.blockedCountries || [],
+        syncStatus: statusPayload?.status || c.syncStatus,
+        loading: false,
+      }));
     } catch (err) {
       setGeoFilterData((c) => ({ ...c, loading: false, error: err.message }));
     }
@@ -3033,15 +3116,16 @@ export default function App() {
     }
   }, []);
 
-  const handleCheckGeoHost = useCallback(async (hostname) => {
-    setGeoFilterData((c) => ({ ...c, checkResult: null }));
+  const handleSyncGeoFilter = useCallback(async () => {
+    setGeoFilterData((c) => ({ ...c, syncing: true, error: '' }));
     try {
-      const payload = await requestJson('/geo-filter/check', { method: 'POST', body: JSON.stringify({ hostname }) });
-      setGeoFilterData((c) => ({ ...c, checkResult: payload }));
+      const payload = await requestJson('/geo-filter/sync', { method: 'POST' });
+      setGeoFilterData((c) => ({ ...c, syncing: false, syncStatus: payload?.results || {} }));
     } catch (err) {
-      setGeoFilterData((c) => ({ ...c, error: err.message }));
+      setGeoFilterData((c) => ({ ...c, syncing: false, error: err.message }));
     }
   }, []);
+
 
   const handleCheckContentFilterDomain = useCallback(async (domain) => {
     setContentFilterData((current) => ({ ...current, checking: true, error: '', message: '' }));
@@ -3216,7 +3300,7 @@ export default function App() {
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
         {activePage === 'geoblocking' ? (
-          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onRefresh={loadGeoFilter} />
+          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onRefresh={loadGeoFilter} onSync={handleSyncGeoFilter} />
         ) : null}
         {activePage === 'controls' ? (
           <ControlsPage

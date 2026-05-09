@@ -97,89 +97,117 @@ function sendBlockSocket(socket, label, detail) {
   socket.destroy();
 }
 
+/* ─── safe socket helpers ────────────────────────────────────────────────── */
+
+function safeWrite(socket, data) {
+  try { if (socket.writable) socket.write(data); } catch { /* ignore */ }
+}
+
+function safeDestroy(socket) {
+  try { if (!socket.destroyed) socket.destroy(); } catch { /* ignore */ }
+}
+
+function pipeWithErrors(src, dst) {
+  src.on('error', () => safeDestroy(dst));
+  dst.on('error', () => safeDestroy(src));
+  src.pipe(dst, { end: true });
+}
+
 /* ─── proxy logic ────────────────────────────────────────────────────────── */
 
 async function handleHttp(req, res) {
-  /* Plain HTTP requests: the browser sends the full URL as the path. */
-  let targetUrl;
   try {
-    targetUrl = new URL(req.url.startsWith('http') ? req.url : `http://${req.headers.host}${req.url}`);
-  } catch {
-    res.writeHead(400); res.end('Bad Request'); return;
+    let targetUrl;
+    try {
+      targetUrl = new URL(req.url.startsWith('http') ? req.url : `http://${req.headers.host}${req.url}`);
+    } catch {
+      res.writeHead(400); res.end('Bad Request'); return;
+    }
+
+    const port = Number(targetUrl.port || 80);
+    if (isPortBlocked(port)) {
+      sendBlockHtml(res, `An active Firewall rule is blocking TCP port`, `port ${port}`);
+      return;
+    }
+    if (isDomainBlocked(targetUrl.hostname)) {
+      logContentBlock(targetUrl.hostname);
+      sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
+      return;
+    }
+
+    const geo = await isGeoBlocked(targetUrl.hostname);
+    if (geo.blocked) {
+      sendBlockHtml(res, `This destination is blocked by the Geo-Filter policy.`, `${targetUrl.hostname} — ${geo.country}`);
+      return;
+    }
+
+    const options = {
+      hostname: targetUrl.hostname,
+      port,
+      path:     targetUrl.pathname + targetUrl.search,
+      method:   req.method,
+      headers:  { ...req.headers, host: targetUrl.hostname },
+    };
+
+    const upstream = http.request(options, (upRes) => {
+      try {
+        if (!res.headersSent) res.writeHead(upRes.statusCode, upRes.headers);
+        pipeWithErrors(upRes, res);
+      } catch { safeDestroy(res); }
+    });
+
+    upstream.on('error', () => {
+      try { if (!res.headersSent) res.writeHead(502); res.end(); } catch { /* ignore */ }
+    });
+
+    req.on('error', () => safeDestroy(upstream));
+    pipeWithErrors(req, upstream);
+  } catch (err) {
+    console.error('[proxy] handleHttp unhandled:', err.message);
+    try { if (!res.headersSent) res.writeHead(500); res.end(); } catch { /* ignore */ }
   }
-
-  const port = Number(targetUrl.port || 80);
-  if (isPortBlocked(port)) {
-    sendBlockHtml(res, `An active Firewall rule is blocking TCP port`, `port ${port}`);
-    return;
-  }
-  if (isDomainBlocked(targetUrl.hostname)) {
-    logContentBlock(targetUrl.hostname);
-    sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
-    return;
-  }
-
-  const geo = await isGeoBlocked(targetUrl.hostname);
-  if (geo.blocked) {
-    sendBlockHtml(res, `This destination is blocked by the Geo-Filter policy.`, `${targetUrl.hostname} — ${geo.country}`);
-    return;
-  }
-
-  const options = {
-    hostname: targetUrl.hostname,
-    port,
-    path:     targetUrl.pathname + targetUrl.search,
-    method:   req.method,
-    headers:  { ...req.headers, host: targetUrl.hostname },
-  };
-
-  const upstream = http.request(options, (upRes) => {
-    res.writeHead(upRes.statusCode, upRes.headers);
-    upRes.pipe(res, { end: true });
-  });
-
-  upstream.on('error', (err) => {
-    if (!res.headersSent) { res.writeHead(502); }
-    res.end(`Upstream error: ${err.message}`);
-  });
-
-  req.pipe(upstream, { end: true });
 }
 
 async function handleConnect(req, clientSocket, head) {
-  /* HTTPS CONNECT tunnelling */
-  const parts = req.url.split(':');
-  const host  = parts[0];
-  const port  = Number(parts[1]) || 443;
+  try {
+    const parts = req.url.split(':');
+    const host  = parts[0];
+    const port  = Number(parts[1]) || 443;
 
-  if (isPortBlocked(port)) {
-    sendBlockSocket(clientSocket, `An active Firewall rule is blocking TCP port`, `port ${port}`);
-    return;
+    if (isPortBlocked(port)) {
+      sendBlockSocket(clientSocket, `An active Firewall rule is blocking TCP port`, `port ${port}`);
+      return;
+    }
+    if (isDomainBlocked(host)) {
+      logContentBlock(host);
+      sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
+      return;
+    }
+
+    const geo = await isGeoBlocked(host);
+    if (geo.blocked) {
+      sendBlockSocket(clientSocket, `This destination is blocked by the Geo-Filter policy.`, `${host} — ${geo.country}`);
+      return;
+    }
+
+    const serverSocket = net.connect(port, host, () => {
+      try {
+        safeWrite(clientSocket, 'HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head && head.length) safeWrite(serverSocket, head);
+        pipeWithErrors(serverSocket, clientSocket);
+        pipeWithErrors(clientSocket, serverSocket);
+      } catch { safeDestroy(clientSocket); safeDestroy(serverSocket); }
+    });
+
+    serverSocket.on('error', () => {
+      safeWrite(clientSocket, 'HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      safeDestroy(clientSocket);
+    });
+    clientSocket.on('error', () => safeDestroy(serverSocket));
+  } catch (err) {
+    console.error('[proxy] handleConnect unhandled:', err.message);
+    safeDestroy(clientSocket);
   }
-  if (isDomainBlocked(host)) {
-    logContentBlock(host);
-    sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
-    return;
-  }
-
-  const geo = await isGeoBlocked(host);
-  if (geo.blocked) {
-    sendBlockSocket(clientSocket, `This destination is blocked by the Geo-Filter policy.`, `${host} — ${geo.country}`);
-    return;
-  }
-
-  const serverSocket = net.connect(port, host, () => {
-    clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-    if (head && head.length) serverSocket.write(head);
-    serverSocket.pipe(clientSocket, { end: true });
-    clientSocket.pipe(serverSocket, { end: true });
-  });
-
-  serverSocket.on('error', () => {
-    clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-    clientSocket.destroy();
-  });
-  clientSocket.on('error', () => serverSocket.destroy());
 }
 
 /* ─── lifecycle ──────────────────────────────────────────────────────────── */

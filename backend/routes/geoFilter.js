@@ -2,7 +2,7 @@ const express = require('express');
 
 const verifyToken = require('../middleware/verifyToken');
 const { getGeoFilterState, updateGeoFilter } = require('../store/geoFilterStore');
-const { getCountry, getRecentAttacks } = require('../utils/geoFilter');
+const { getCountry, getRecentAttacks, syncCountryDomains, getCountrySyncStatus, COUNTRY_SOURCES } = require('../utils/geoFilter');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -31,6 +31,24 @@ router.post('/check', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+router.post('/sync', async (req, res) => {
+  try {
+    const state = getGeoFilterState();
+    const countries = state.blockedCountries.filter((c) => COUNTRY_SOURCES[c]);
+    if (countries.length === 0) {
+      return res.json({ success: true, message: 'No countries with domain sources selected.', results: {} });
+    }
+    const results = await syncCountryDomains(countries);
+    res.json({ success: true, results });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get('/sync-status', (_req, res) => {
+  res.json({ success: true, status: getCountrySyncStatus() });
 });
 
 module.exports = router;
