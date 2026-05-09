@@ -391,8 +391,10 @@ async function syncPolicy(policy, options = {}) {
 async function applyPolicy(policy, options = {}) {
   const compiled = await syncPolicy(policy, options);
 
-  // Populează cache-ul în memorie — proxy-ul blochează imediat, fără admin
-  if (policy?.enabled && compiled.domains.length > 0) {
+  // Populează cache-ul în memorie — proxy-ul blochează dacă există categorii selectate,
+  // indiferent de toggle-ul "enabled" (care controlează doar hosts file-ul)
+  const hasContent = compiled.domains.length > 0;
+  if (hasContent) {
     setBlockedDomains(compiled.domains);
   } else {
     setBlockedDomains([]);

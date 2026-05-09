@@ -92,6 +92,14 @@ router.post('/sync', async (_req, res) => {
 router.post('/apply', async (req, res) => {
   try {
     const patch = buildPolicyPatch(req.body);
+
+    // Auto-activează policy dacă sunt categorii selectate
+    const hasCategories = patch.categories && Object.values(patch.categories).some(Boolean);
+    const hasCustom = patch.customBlocklist && patch.customBlocklist.length > 0;
+    if (hasCategories || hasCustom) {
+      patch.enabled = true;
+    }
+
     if (Object.keys(patch).length > 0) {
       updateContentFilterPolicy(patch);
     }
@@ -109,15 +117,15 @@ router.post('/apply', async (req, res) => {
       dnsFlushMessage: result.dnsFlushMessage,
       lastError: '',
       lastMessage: result.applied
-        ? `Applied ${result.appliedDomainCount} blocked domains to the system hosts file.`
-        : 'Removed managed content-filter entries from the hosts file because the policy is disabled or empty.',
+        ? `${result.appliedDomainCount} domenii blocate prin proxy (Chrome/Edge).`
+        : 'Nicio categorie selectată — blocarea a fost dezactivată.',
     });
 
     res.json({
       success: true,
       message: result.applied
-        ? `Applied ${result.appliedDomainCount} blocked domains.`
-        : 'Removed managed content-filter entries from the hosts file.',
+        ? `Blocare activă: ${result.appliedDomainCount} domenii.`
+        : 'Nicio categorie selectată.',
       ...buildOverview(getContentFilterState()),
     });
   } catch (error) {
