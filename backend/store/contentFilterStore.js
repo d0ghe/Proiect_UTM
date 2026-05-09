@@ -171,9 +171,32 @@ function createContentFilterStore(storeFile = process.env.CONTENT_FILTER_STORE_F
 
 const defaultStore = createContentFilterStore();
 
+/* ─── In-memory domain cache (used by httpProxy without admin) ───────────── */
+
+let _blockedDomains = new Set();
+
+function setBlockedDomains(domains) {
+  _blockedDomains = new Set(Array.isArray(domains) ? domains.map((d) => d.toLowerCase()) : []);
+  console.log(`[+] Content filter proxy cache: ${_blockedDomains.size} domenii blocate.`);
+}
+
+function isDomainBlocked(hostname) {
+  if (_blockedDomains.size === 0) return false;
+  const h = String(hostname || '').toLowerCase();
+  if (_blockedDomains.has(h)) return true;
+  // Verifică domenii părinte: sub.blocked.com → blocked.com
+  const parts = h.split('.');
+  for (let i = 1; i < parts.length - 1; i++) {
+    if (_blockedDomains.has(parts.slice(i).join('.'))) return true;
+  }
+  return false;
+}
+
 module.exports = {
   CATEGORY_IDS,
   CONTENT_FILTER_STORE_FILE: defaultStore.storeFile,
   createContentFilterStore,
+  isDomainBlocked,
+  setBlockedDomains,
   ...defaultStore,
 };

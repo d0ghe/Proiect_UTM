@@ -37,9 +37,14 @@ function isPortBlocked(port) {
   );
 }
 
+function isDomainBlocked(hostname) {
+  try { return require('../store/contentFilterStore').isDomainBlocked(hostname); }
+  catch { return false; }
+}
+
 /* ─── blocked response helpers ───────────────────────────────────────────── */
 
-const BLOCK_HTML = (port) => `<!DOCTYPE html>
+const BLOCK_HTML = (reason, detail) => `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Blocked — UTM Firewall</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -52,30 +57,31 @@ const BLOCK_HTML = (port) => `<!DOCTYPE html>
   code{background:#1e1e1e;border-radius:4px;padding:.15em .4em;font-size:.85em}
 </style></head>
 <body><div class="card">
-  <div style="font-size:2rem;margin-bottom:1rem">🔒</div>
+  <div style="font-size:2rem;margin-bottom:1rem">&#128274;</div>
   <h1>Connection Blocked</h1>
-  <p>An active UTM Firewall rule is blocking TCP port <code>${port}</code>.</p>
-  <p>Remove the rule from the <strong>Firewall</strong> page to restore access.</p>
+  <p>${reason}</p>
+  <p><code>${detail}</code></p>
+  <p>Modify the rule in <strong>Containment Atlas</strong> to restore access.</p>
 </div></body></html>`;
 
-function sendBlockHtml(res, port) {
-  const body = BLOCK_HTML(port);
+function sendBlockHtml(res, label, detail) {
+  const body = BLOCK_HTML(label, detail);
   res.writeHead(403, {
     'Content-Type':   'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
-    'X-UTM-Block':    `port-${port}`,
+    'X-UTM-Block':    detail,
     'Connection':     'close',
   });
   res.end(body);
 }
 
-function sendBlockSocket(socket, port) {
-  const body = BLOCK_HTML(port);
+function sendBlockSocket(socket, label, detail) {
+  const body = BLOCK_HTML(label, detail);
   socket.write(
     `HTTP/1.1 403 Forbidden\r\n` +
     `Content-Type: text/html; charset=utf-8\r\n` +
     `Content-Length: ${Buffer.byteLength(body)}\r\n` +
-    `X-UTM-Block: port-${port}\r\n` +
+    `X-UTM-Block: ${detail}\r\n` +
     `Connection: close\r\n\r\n` +
     body
   );
@@ -94,7 +100,14 @@ function handleHttp(req, res) {
   }
 
   const port = Number(targetUrl.port || 80);
-  if (isPortBlocked(port)) { sendBlockHtml(res, port); return; }
+  if (isPortBlocked(port)) {
+    sendBlockHtml(res, `An active Firewall rule is blocking TCP port`, `port ${port}`);
+    return;
+  }
+  if (isDomainBlocked(targetUrl.hostname)) {
+    sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
+    return;
+  }
 
   const options = {
     hostname: targetUrl.hostname,
@@ -123,7 +136,14 @@ function handleConnect(req, clientSocket, head) {
   const host  = parts[0];
   const port  = Number(parts[1]) || 443;
 
-  if (isPortBlocked(port)) { sendBlockSocket(clientSocket, port); return; }
+  if (isPortBlocked(port)) {
+    sendBlockSocket(clientSocket, `An active Firewall rule is blocking TCP port`, `port ${port}`);
+    return;
+  }
+  if (isDomainBlocked(host)) {
+    sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
+    return;
+  }
 
   const serverSocket = net.connect(port, host, () => {
     clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');

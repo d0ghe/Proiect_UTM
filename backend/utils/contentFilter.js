@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { CATEGORY_IDS } = require('../store/contentFilterStore');
+const { CATEGORY_IDS, setBlockedDomains } = require('../store/contentFilterStore');
 
 const CACHE_DIR = path.join(__dirname, '../store/content-filter-cache');
 const HOSTS_SECTION_START = '# === Containment Atlas Content Filter Start ===';
@@ -389,64 +389,84 @@ async function syncPolicy(policy, options = {}) {
 }
 
 async function applyPolicy(policy, options = {}) {
-  const environment = inspectEnvironment();
-  if (!environment.supported) {
-    throw createContentFilterError(environment.permissionMessage, 400, 'PLATFORM_UNSUPPORTED');
-  }
-
-  if (!environment.canWrite) {
-    throw createContentFilterError(environment.permissionMessage, 403, 'ELEVATION_REQUIRED');
-  }
-
   const compiled = await syncPolicy(policy, options);
-  const hostsPath = environment.hostsPath;
-  const currentHosts = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf8') : '';
-  const strippedHosts = stripManagedSection(currentHosts);
 
-  if (!policy?.enabled || compiled.domains.length === 0) {
-    writeHostsFile(hostsPath, strippedHosts);
-    return {
-      ...compiled,
-      applied: false,
-      appliedDomainCount: 0,
-      dnsFlushMessage: flushDnsCache(),
-      lastApplyAt: new Date().toISOString(),
-    };
+  // Populează cache-ul în memorie — proxy-ul blochează imediat, fără admin
+  if (policy?.enabled && compiled.domains.length > 0) {
+    setBlockedDomains(compiled.domains);
+  } else {
+    setBlockedDomains([]);
   }
 
-  const managedSection = buildManagedSection(compiled);
-  const nextContent = [strippedHosts, managedSection].filter(Boolean).join('\n\n');
-  writeHostsFile(hostsPath, nextContent);
+  const environment = inspectEnvironment();
+  let dnsFlushMessage = '';
+  let hostsApplied = false;
 
+  // Încearcă să scrie și în hosts file (funcționează dacă e admin)
+  if (environment.supported && environment.canWrite) {
+    const hostsPath = environment.hostsPath;
+    const currentHosts = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf8') : '';
+    const strippedHosts = stripManagedSection(currentHosts);
+
+    if (!policy?.enabled || compiled.domains.length === 0) {
+      writeHostsFile(hostsPath, strippedHosts);
+    } else {
+      const managedSection = buildManagedSection(compiled);
+      const nextContent = [strippedHosts, managedSection].filter(Boolean).join('\n\n');
+      writeHostsFile(hostsPath, nextContent);
+      hostsApplied = true;
+    }
+    dnsFlushMessage = flushDnsCache();
+  } else {
+    dnsFlushMessage = environment.canWrite === false
+      ? 'Hosts file necesită admin — blocare activă doar prin proxy (Chrome/Edge).'
+      : 'Blocare activă prin proxy (Chrome/Edge).';
+  }
+
+  const applied = policy?.enabled && compiled.domains.length > 0;
   return {
     ...compiled,
-    applied: true,
-    appliedDomainCount: compiled.domains.length,
-    dnsFlushMessage: flushDnsCache(),
+    applied,
+    hostsApplied,
+    appliedDomainCount: applied ? compiled.domains.length : 0,
+    dnsFlushMessage,
     lastApplyAt: new Date().toISOString(),
   };
 }
 
 function removeManagedBlock() {
+  // Golește cache-ul proxy imediat
+  setBlockedDomains([]);
+
   const environment = inspectEnvironment();
-  if (!environment.supported) {
-    throw createContentFilterError(environment.permissionMessage, 400, 'PLATFORM_UNSUPPORTED');
-  }
+  let dnsFlushMessage = 'Proxy cache cleared.';
 
-  if (!environment.canWrite) {
-    throw createContentFilterError(environment.permissionMessage, 403, 'ELEVATION_REQUIRED');
+  if (environment.supported && environment.canWrite) {
+    const hostsPath = environment.hostsPath;
+    const currentHosts = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf8') : '';
+    const strippedHosts = stripManagedSection(currentHosts);
+    writeHostsFile(hostsPath, strippedHosts);
+    dnsFlushMessage = flushDnsCache();
   }
-
-  const hostsPath = environment.hostsPath;
-  const currentHosts = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf8') : '';
-  const strippedHosts = stripManagedSection(currentHosts);
-  writeHostsFile(hostsPath, strippedHosts);
 
   return {
     removed: true,
-    dnsFlushMessage: flushDnsCache(),
+    dnsFlushMessage,
     lastRemoveAt: new Date().toISOString(),
   };
+}
+
+// Apelat la startup — reîncarcă domeniile din cache local (fără rețea)
+async function initBlockedDomains(policy) {
+  if (!policy?.enabled) return;
+  try {
+    const compiled = await compilePolicy(policy, { sync: false });
+    if (compiled.domains.length > 0) {
+      setBlockedDomains(compiled.domains);
+    }
+  } catch {
+    // Cache inexistent — normal la prima pornire
+  }
 }
 
 async function checkDomainAgainstPolicy(domain, policy) {
@@ -515,6 +535,7 @@ module.exports = {
   checkDomainAgainstPolicy,
   compilePolicy,
   createContentFilterError,
+  initBlockedDomains,
   inspectEnvironment,
   removeManagedBlock,
   splitTextList,

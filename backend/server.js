@@ -6,6 +6,8 @@ const { exec } = require('child_process');
 const { loadRuntimeConfig }       = require('./utils/runtimeConfig');
 const { attach: attachWebSocket } = require('./utils/wsBroadcaster');
 const { startProxy, stopProxy, PROXY_PORT } = require('./utils/httpProxy');
+const { initBlockedDomains }               = require('./utils/contentFilter');
+const { getContentFilterState }            = require('./store/contentFilterStore');
 
 global.stats = {
   files_scanned: 0,
@@ -89,6 +91,10 @@ server.listen(PORT, async () => {
 
   startProxy();
   await enableChromeProxy();
+
+  // Reîncarcă domeniile blocate din cache local (fără rețea)
+  const cfState = getContentFilterState();
+  await initBlockedDomains(cfState.policy);
 });
 
 /* ─── Cleanup la oprire (Ctrl+C) ────────────────────────────────────────── */
