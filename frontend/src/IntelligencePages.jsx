@@ -194,8 +194,12 @@ export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
 export function MemoryScanPage({ data, loading, onScan }) {
   const result  = data?.lastScan;
   const summary = result?.summary;
+  const [showAll, setShowAll] = useState(false);
 
   const threatColor = (t) => t === 'CRITICAL' ? '#ff453a' : t === 'SUSPICIOUS' ? '#f5a623' : '#34c759';
+
+  const allProcs    = result?.processes || [];
+  const visibleProcs = showAll ? allProcs : allProcs.filter((p) => p.threat !== 'CLEAN');
 
   return (
     <div className="page-content">
@@ -205,9 +209,30 @@ export function MemoryScanPage({ data, loading, onScan }) {
           <h1 className="page-title">Live Process Memory Scanner</h1>
           <p className="page-subtitle">Analizează toate procesele active: căi suspecte, obfuscare în argumente, masquerade, parent-child chains anormale.</p>
         </div>
-        <button className="control-btn" onClick={onScan} disabled={loading} type="button" style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}>
-          {loading ? 'Scanning…' : 'Scan Now'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {summary && (
+            <>
+              <button
+                className={`control-btn${showAll ? '' : ' control-btn--ghost'}`}
+                onClick={() => setShowAll(true)}
+                type="button"
+              >
+                All ({summary.total})
+              </button>
+              <button
+                className={`control-btn${!showAll ? '' : ' control-btn--ghost'}`}
+                onClick={() => setShowAll(false)}
+                type="button"
+                style={!showAll ? { borderColor: '#ff453a', color: '#ff453a', background: 'rgba(255,69,58,0.12)' } : {}}
+              >
+                Threats ({summary.critical + summary.suspicious})
+              </button>
+            </>
+          )}
+          <button className="control-btn" onClick={onScan} disabled={loading} type="button" style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}>
+            {loading ? 'Scanning…' : 'Scan Now'}
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -234,27 +259,54 @@ export function MemoryScanPage({ data, loading, onScan }) {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {(result?.processes || []).filter((p) => p.threat !== 'CLEAN').map((proc) => (
-              <div key={proc.pid} style={{ padding: '0.9rem 1.1rem', background: '#141414', border: `1px solid ${threatColor(proc.threat)}22`, borderLeft: `3px solid ${threatColor(proc.threat)}`, borderRadius: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                  <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 4, background: `${threatColor(proc.threat)}22`, color: threatColor(proc.threat), border: `1px solid ${threatColor(proc.threat)}` }}>
+            {visibleProcs.map((proc) => (
+              <div
+                key={proc.pid}
+                style={{
+                  padding: '0.9rem 1.1rem',
+                  background: '#141414',
+                  border: `1px solid ${proc.threat === 'CLEAN' ? '#2a2a2a' : `${threatColor(proc.threat)}22`}`,
+                  borderLeft: `3px solid ${threatColor(proc.threat)}`,
+                  borderRadius: 8,
+                  opacity: proc.threat === 'CLEAN' ? 0.65 : 1,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: proc.findings.length ? '0.4rem' : 0 }}>
+                  <span style={{
+                    fontSize: '0.7rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 4,
+                    background: `${threatColor(proc.threat)}22`, color: threatColor(proc.threat),
+                    border: `1px solid ${threatColor(proc.threat)}`,
+                  }}>
                     {proc.threat}
                   </span>
                   <strong style={{ fontSize: '0.9rem' }}>{proc.name}</strong>
                   <span style={{ fontSize: '0.75rem', color: '#636366' }}>PID {proc.pid}</span>
-                  <span style={{ fontSize: '0.75rem', color: '#636366', marginLeft: 'auto' }}>Score: {proc.score}</span>
+                  {proc.memMB > 0 && <span style={{ fontSize: '0.72rem', color: '#555' }}>{proc.memMB} MB</span>}
+                  {proc.isKnownGood && <span style={{ fontSize: '0.68rem', color: '#34c759', background: 'rgba(52,199,89,0.1)', border: '1px solid rgba(52,199,89,0.3)', padding: '0.1rem 0.4rem', borderRadius: 4 }}>known-good</span>}
+                  {proc.score > 0 && <span style={{ fontSize: '0.72rem', color: '#636366', marginLeft: 'auto' }}>Score: {proc.score}</span>}
                 </div>
-                {proc.path && <div style={{ fontSize: '0.75rem', color: '#888', fontFamily: 'monospace', marginBottom: '0.4rem' }}>{proc.path}</div>}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                  {proc.findings.map((f, i) => (
-                    <span key={i} style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem', borderRadius: 4, background: f.severity === 'critical' ? 'rgba(255,69,58,0.15)' : 'rgba(245,166,35,0.15)', color: f.severity === 'critical' ? '#ff453a' : '#f5a623', border: `1px solid ${f.severity === 'critical' ? '#ff453a' : '#f5a623'}44` }} title={f.detail}>
-                      {f.type}
-                    </span>
-                  ))}
-                </div>
+                {proc.path && <div style={{ fontSize: '0.72rem', color: '#666', fontFamily: 'monospace', marginBottom: proc.findings.length ? '0.4rem' : 0 }}>{proc.path}</div>}
+                {proc.findings.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                    {proc.findings.map((f, i) => (
+                      <span
+                        key={i}
+                        style={{
+                          fontSize: '0.68rem', padding: '0.1rem 0.45rem', borderRadius: 4,
+                          background: f.severity === 'critical' ? 'rgba(255,69,58,0.15)' : 'rgba(245,166,35,0.15)',
+                          color: f.severity === 'critical' ? '#ff453a' : '#f5a623',
+                          border: `1px solid ${f.severity === 'critical' ? '#ff453a' : '#f5a623'}44`,
+                        }}
+                        title={f.detail}
+                      >
+                        {f.type}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
-            {summary.critical === 0 && summary.suspicious === 0 && (
+            {!showAll && summary.critical === 0 && summary.suspicious === 0 && (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#34c759', background: '#141414', borderRadius: 10, border: '1px solid #34c75922' }}>
                 ✓ No suspicious processes detected across {summary.total} running processes.
               </div>
@@ -262,7 +314,7 @@ export function MemoryScanPage({ data, loading, onScan }) {
           </div>
 
           <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: '#444', textAlign: 'right' }}>
-            Scanned at {new Date(summary.scannedAt).toLocaleString()}
+            Showing {visibleProcs.length} of {summary.total} processes · Scanned at {new Date(summary.scannedAt).toLocaleString()}
           </div>
         </>
       )}
