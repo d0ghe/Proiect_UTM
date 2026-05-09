@@ -35,17 +35,22 @@ const COUNTRY_COORDS = {
   ZW:[29.2,-19.0],
 };
 
-function addAttack(country, hostname, geo) {
+function addAttack(type, country, hostname, geo) {
   const coords = COUNTRY_COORDS[country];
   if (!coords) return;
-  attackLog.push({
-    country,
-    hostname,
-    city:      geo?.city  || '',
-    coords,
-    timestamp: Date.now(),
-  });
+  attackLog.push({ type, country, hostname, city: geo?.city || '', coords, timestamp: Date.now() });
   if (attackLog.length > MAX_ATTACKS) attackLog.shift();
+}
+
+function addContentBlock(hostname) {
+  resolveIp(hostname).then((ip) => {
+    const geo     = ip ? geoip.lookup(ip) : null;
+    const country = geo?.country || 'XX';
+    const coords  = COUNTRY_COORDS[country];
+    if (!coords) return;
+    attackLog.push({ type: 'content', country, hostname, city: geo?.city || '', coords, timestamp: Date.now() });
+    if (attackLog.length > MAX_ATTACKS) attackLog.shift();
+  }).catch(() => {});
 }
 
 function getRecentAttacks(limit = 50) {
@@ -82,8 +87,8 @@ async function isGeoBlocked(hostname) {
   if (!country) return { blocked: false };
 
   const blocked = state.blockedCountries.includes(country);
-  if (blocked) addAttack(country, hostname, geo);
+  if (blocked) addAttack('geo', country, hostname, geo);
   return { blocked, country };
 }
 
-module.exports = { isGeoBlocked, getCountry, getRecentAttacks };
+module.exports = { isGeoBlocked, getCountry, getRecentAttacks, addContentBlock };

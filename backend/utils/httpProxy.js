@@ -43,8 +43,12 @@ function isDomainBlocked(hostname) {
 }
 
 async function isGeoBlocked(hostname) {
-  try { return require('../utils/geoFilter').isGeoBlocked(hostname); }
+  try { return await require('../utils/geoFilter').isGeoBlocked(hostname); }
   catch { return { blocked: false }; }
+}
+
+function logContentBlock(hostname) {
+  try { require('../utils/geoFilter').addContentBlock(hostname); } catch { /* ignore */ }
 }
 
 /* ─── blocked response helpers ───────────────────────────────────────────── */
@@ -110,6 +114,7 @@ async function handleHttp(req, res) {
     return;
   }
   if (isDomainBlocked(targetUrl.hostname)) {
+    logContentBlock(targetUrl.hostname);
     sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
     return;
   }
@@ -152,6 +157,7 @@ async function handleConnect(req, clientSocket, head) {
     return;
   }
   if (isDomainBlocked(host)) {
+    logContentBlock(host);
     sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
     return;
   }

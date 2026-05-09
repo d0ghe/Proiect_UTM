@@ -2201,13 +2201,7 @@ function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset })
   );
 }
 
-import {
-  ComposableMap,
-  Geographies,
-  Geography,
-  Marker,
-  Annotation,
-} from 'react-simple-maps';
+import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -2250,103 +2244,108 @@ function countryFlag(code) {
   return [...code.toUpperCase()].map((ch) => String.fromCodePoint(0x1F1E6 - 65 + ch.charCodeAt(0))).join('');
 }
 
-/* Animatie arc de atac SVG */
-function AttackArc({ from, progress }) {
-  const [x1, y1] = from;
-  const [x2, y2] = DEST;
-  const mx = (x1 + x2) / 2;
-  const my = Math.min(y1, y2) - 30;
-  const d = `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`;
-  return (
-    <path
-      d={d}
-      fill="none"
-      stroke="#ff453a"
-      strokeWidth={1.2}
-      strokeOpacity={0.7 * (1 - progress)}
-      strokeDasharray="6 3"
-      style={{ pointerEvents: 'none' }}
-    />
-  );
-}
+// Amber = geo-block, Rosu = content-filter block
+const GEO_COLOR     = '#f5a623';
+const CONTENT_COLOR = '#ff453a';
 
 function AttackMap({ attacks }) {
-  const [tick, setTick] = useState(0);
-
+  const [, rerender] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 80);
+    const id = setInterval(() => rerender((n) => n + 1), 1500);
     return () => clearInterval(id);
   }, []);
 
-  // Ultimele 8 atacuri cu pozitie
+  const now = Date.now();
+  const FADE_MS = 22000;
   const visible = attacks
-    .filter((a) => COUNTRY_COORDS_UI[a.country])
-    .slice(0, 8);
+    .filter((a) => COUNTRY_COORDS_UI[a.country] && now - a.timestamp < FADE_MS)
+    .slice(0, 20);
+
+  const geoCount     = attacks.filter((a) => a.type === 'geo').length;
+  const contentCount = attacks.filter((a) => a.type === 'content').length;
 
   return (
-    <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
-      <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1e1e1e', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Live Threat Map</span>
-        <span style={{ fontSize: '0.75rem', color: '#ff453a' }}>{attacks.length > 0 ? `${attacks.length} blocked` : 'No attacks yet'}</span>
+    <div style={{ background: '#0a0a0a', border: '1px solid #1e1e1e', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
+      {/* Header */}
+      <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>Live Threat Map</span>
+        <span style={{ fontSize: '0.75rem' }}>
+          <span style={{ color: GEO_COLOR, fontWeight: 600 }}>● Geo-Block</span>
+          <span style={{ color: '#444', margin: '0 0.5rem' }}>|</span>
+          <span style={{ color: CONTENT_COLOR, fontWeight: 600 }}>● Content Filter</span>
+        </span>
+        <span style={{ fontSize: '0.72rem', color: '#444' }}>
+          {geoCount + contentCount > 0 ? `${geoCount + contentCount} total blocked` : 'Waiting for blocked connections…'}
+        </span>
       </div>
-      <ComposableMap
-        projectionConfig={{ scale: 140, center: [10, 20] }}
-        style={{ width: '100%', height: 'auto' }}
-      >
+
+      {/* Harta */}
+      <ComposableMap projectionConfig={{ scale: 147, center: [10, 15] }} style={{ width: '100%', height: 'auto', display: 'block' }}>
         <Geographies geography={GEO_URL}>
-          {({ geographies }) =>
-            geographies.map((geo) => (
-              <Geography
-                key={geo.rsmKey}
-                geography={geo}
-                fill="#1a1a1a"
-                stroke="#2a2a2a"
-                strokeWidth={0.4}
-                style={{ default: { outline: 'none' }, hover: { outline: 'none' }, pressed: { outline: 'none' } }}
-              />
-            ))
-          }
+          {({ geographies }) => geographies.map((geo) => (
+            <Geography
+              key={geo.rsmKey}
+              geography={geo}
+              fill="#161616"
+              stroke="#252525"
+              strokeWidth={0.4}
+              style={{ default: { outline: 'none' }, hover: { outline: 'none' }, pressed: { outline: 'none' } }}
+            />
+          ))}
         </Geographies>
 
-        {/* Linii de atac animate */}
+        {/* Linii de la sursa la Romania */}
         {visible.map((atk, i) => {
-          const progress = ((tick * 0.04) + i * 0.3) % 1;
+          const age     = now - atk.timestamp;
+          const opacity = Math.max(0.08, 1 - age / FADE_MS);
+          const color   = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
           return (
-            <Annotation
-              key={`arc-${i}`}
-              subject={atk.coords}
-              dx={0}
-              dy={0}
-            >
-              <AttackArc from={atk.coords} progress={progress} />
-            </Annotation>
+            <Line
+              key={`line-${atk.timestamp}-${i}`}
+              from={COUNTRY_COORDS_UI[atk.country]}
+              to={DEST}
+              stroke={color}
+              strokeWidth={1.4}
+              strokeOpacity={opacity}
+              strokeLinecap="round"
+            />
           );
         })}
 
-        {/* Dot sursa atac */}
-        {visible.map((atk, i) => (
-          <Marker key={`src-${i}`} coordinates={atk.coords}>
-            <circle r={3} fill="#ff453a" fillOpacity={0.9} />
-          </Marker>
-        ))}
+        {/* Dot sursa */}
+        {visible.map((atk, i) => {
+          const age     = now - atk.timestamp;
+          const opacity = Math.max(0.2, 1 - age / FADE_MS);
+          const color   = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
+          return (
+            <Marker key={`dot-${atk.timestamp}-${i}`} coordinates={COUNTRY_COORDS_UI[atk.country]}>
+              <circle r={3.5} fill={color} fillOpacity={opacity} />
+            </Marker>
+          );
+        })}
 
-        {/* Romania - destinatie */}
+        {/* Romania — destinatie */}
         <Marker coordinates={DEST}>
-          <circle r={5} fill="#0a84ff" stroke="#fff" strokeWidth={1.5} />
+          <circle r={6} fill="#0a84ff" stroke="#ffffff" strokeWidth={1.5} />
+          <circle r={10} fill="none" stroke="#0a84ff" strokeWidth={1} strokeOpacity={0.3} />
         </Marker>
       </ComposableMap>
 
       {/* Feed atacuri recente */}
       {attacks.length > 0 && (
-        <div style={{ borderTop: '1px solid #1e1e1e', maxHeight: '120px', overflowY: 'auto' }}>
-          {attacks.slice(0, 10).map((atk, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 1.25rem', borderBottom: '1px solid #111', fontSize: '0.78rem' }}>
-              <span style={{ color: '#ff453a', fontWeight: 700 }}>{countryFlag(atk.country)} {atk.country}</span>
-              <span style={{ color: '#636366' }}>→</span>
-              <span style={{ color: '#a0a0a0', flex: 1 }}>{atk.hostname}</span>
-              <span style={{ color: '#444', whiteSpace: 'nowrap' }}>{new Date(atk.timestamp).toLocaleTimeString()}</span>
-            </div>
-          ))}
+        <div style={{ borderTop: '1px solid #1a1a1a', maxHeight: '130px', overflowY: 'auto' }}>
+          {attacks.slice(0, 12).map((atk, i) => {
+            const color = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
+            const label = atk.type === 'content' ? 'Content Filter' : 'Geo-Block';
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.35rem 1.25rem', borderBottom: '1px solid #111', fontSize: '0.76rem' }}>
+                <span style={{ color, fontWeight: 700, minWidth: '1.4rem' }}>{countryFlag(atk.country)}</span>
+                <span style={{ color, fontSize: '0.7rem', background: `${color}18`, borderRadius: '4px', padding: '0.1rem 0.4rem', whiteSpace: 'nowrap' }}>{label}</span>
+                <span style={{ color: '#888', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{atk.hostname}</span>
+                <span style={{ color: '#3a3a3a', whiteSpace: 'nowrap' }}>{new Date(atk.timestamp).toLocaleTimeString()}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
