@@ -15,6 +15,19 @@ const {
   mapRawVerdict,
   parseBoolean,
 } = require('../utils/hybridAnalysis');
+const { scanBufferForHexSignatures, buildSignatureSummary } = require('../utils/hexSignatures');
+const { analyzeEntropy } = require('../utils/entropyAnalysis');
+const { detectEvasion } = require('../utils/evasionDetection');
+const { detectSubbyteInjection } = require('../utils/subbyteInjection');
+const { computeHeuristicScore } = require('../utils/heuristicScorer');
+const { extractIOCs } = require('../utils/iocExtractor');
+const { mapToMitre } = require('../utils/mitreMapping');
+const { decodeStrings } = require('../utils/stringDecoder');
+const { analyzeScript } = require('../utils/scriptDeobfuscator');
+const { parsePE } = require('../utils/peParser');
+const { recordScan: recordIntelScan } = require('../utils/threatIntel');
+const { broadcast } = require('../utils/wsBroadcaster');
+const { addActivityEntry } = require('../store/activityLog');
 
 const router = express.Router();
 const hybridAnalysisConfig = getHybridAnalysisConfig();
@@ -53,6 +66,15 @@ function logScanResult(data) {
   const detail = data.signature || data.message || 'No extra detail';
   const logEntry = `[${timestamp}] STATUS: ${data.status} | Fisier: ${data.filename} | Hash: ${data.sha256 || '-'} | Rezultat: ${detail}\n`;
   fs.appendFileSync(LOG_FILE, logEntry);
+
+  // Scrie și în Activity Log persistent
+  const level = data.status === 'INFECTED' ? 'ALERT' : data.status === 'REVIEW' ? 'WARNING' : 'INFO';
+  const action = data.status === 'INFECTED'
+    ? `Threat Quarantined: ${data.filename}`
+    : data.status === 'REVIEW'
+      ? `Manual Review Required: ${data.filename}`
+      : `Clean Scan: ${data.filename}`;
+  addActivityEntry(level, 'Protection', action, `Hash: ${data.sha256 || '-'} | ${detail}`);
 }
 
 function getQuarantineFiles() {
@@ -208,10 +230,23 @@ function isTruthyVerdict(value) {
 function createLocalHeuristicResult(file, fileHash) {
   const fileContent = file.buffer.toString('utf8');
 
+  // Detecție EICAR text (fast path)
   if (fileContent.includes(EICAR_MARKER)) {
+    const entropyResult = analyzeEntropy(file.buffer);
+    const evasionResult = detectEvasion(file.buffer);
+    const injectionResult = detectSubbyteInjection(file.buffer);
+    const heuristicScore = computeHeuristicScore({
+      hexMatches: [],
+      entropyResult,
+      evasionResult,
+      injectionResult,
+    });
+
     return {
       detected: true,
       signature: 'EICAR_Test_File (Local Detection)',
+      hexMatches: [],
+      deepAnalysis: { entropyResult, evasionResult, injectionResult, heuristicScore },
       provider: createProviderResult({
         id: 'local-heuristic',
         name: 'Local Heuristic',
@@ -220,6 +255,115 @@ function createLocalHeuristicResult(file, fileHash) {
         metadata: {
           sha256: fileHash,
           signature: 'EICAR_Test_File (Local Detection)',
+          detectionMethod: 'text-pattern',
+        },
+      }),
+    };
+  }
+
+  // Scanare Hex / Buffer (Anti-Obfuscare) — scanează date brute, chunk cu chunk
+  const hexResult = scanBufferForHexSignatures(file.buffer);
+  const criticalHex = hexResult.matches.filter((m) => m.severity === 'critical');
+  const warningHex  = hexResult.matches.filter((m) => m.severity === 'warning');
+
+  // ─── Module de analiză profundă (entropy/evasion/injection/IOC/script/PE) ─
+  const entropyResult   = analyzeEntropy(file.buffer);
+  const evasionResult   = detectEvasion(file.buffer);
+  const injectionResult = detectSubbyteInjection(file.buffer);
+  const iocs            = extractIOCs(file.buffer);
+  const stringDecoded   = decodeStrings(file.buffer);
+  const scriptResult    = analyzeScript(file.buffer, file.originalname);
+  const peResult        = parsePE(file.buffer);
+
+  const heuristicScore  = computeHeuristicScore({
+    hexMatches: hexResult.matches,
+    entropyResult,
+    evasionResult,
+    injectionResult,
+  });
+
+  // Boost score cu IOC + script + decoded
+  heuristicScore.score = Math.min(
+    100,
+    heuristicScore.score
+    + (iocs.suspicionScore || 0)
+    + (stringDecoded.riskContribution || 0)
+    + (scriptResult.riskContribution || 0),
+  );
+  if (heuristicScore.score >= 70) heuristicScore.verdict = 'HIGH_RISK';
+  else if (heuristicScore.score >= 40) heuristicScore.verdict = 'MEDIUM_RISK';
+  else if (heuristicScore.score >= 15) heuristicScore.verdict = 'LOW_RISK';
+  else heuristicScore.verdict = 'MINIMAL_RISK';
+
+  const mitreTechniques = mapToMitre({
+    evasionIndicators: evasionResult.indicators,
+    injectionResult,
+    entropyResult,
+    iocs,
+    stringDecoded: stringDecoded.findings,
+    scriptObfuscation: scriptResult.findings,
+  });
+
+  const deepAnalysis = {
+    entropyResult,
+    evasionResult,
+    injectionResult,
+    iocs,
+    stringDecoded: stringDecoded.findings,
+    scriptResult,
+    peResult,
+    heuristicScore,
+    mitreTechniques,
+  };
+
+  if (hexResult.detected && criticalHex.length > 0) {
+    const sigSummary = buildSignatureSummary(hexResult.matches);
+    const firstMatch = criticalHex[0];
+
+    return {
+      detected: true,
+      signature: sigSummary,
+      hexMatches: hexResult.matches,
+      deepAnalysis,
+      provider: createProviderResult({
+        id: 'local-heuristic',
+        name: 'Local Heuristic',
+        verdict: 'INFECTED',
+        message: `Hex signature match: ${firstMatch.name} at offset ${firstMatch.offsetHex}. ${firstMatch.description}`,
+        metadata: {
+          sha256: fileHash,
+          signature: sigSummary,
+          detectionMethod: 'hex-signature',
+          hexMatches: hexResult.matches,
+          heuristicScore: heuristicScore.score,
+        },
+      }),
+    };
+  }
+
+  // Semnături de avertisment (warning) — verdict REVIEW, nu INFECTED
+  if (warningHex.length > 0 || heuristicScore.score >= 40) {
+    const sigSummary = buildSignatureSummary(hexResult.matches);
+    const scoreNote = heuristicScore.score >= 40
+      ? ` Heuristic score: ${heuristicScore.score}/100 (${heuristicScore.verdict}).`
+      : '';
+
+    return {
+      detected: false,
+      signature: sigSummary,
+      hexMatches: hexResult.matches,
+      deepAnalysis,
+      provider: createProviderResult({
+        id: 'local-heuristic',
+        name: 'Local Heuristic',
+        verdict: 'REVIEW',
+        message: `Suspicious binary pattern detected: ${warningHex.map((m) => m.name).join(', ') || 'deep analysis flags'}.${scoreNote} Manual review recommended.`,
+        metadata: {
+          sha256: fileHash,
+          signature: sigSummary,
+          detectionMethod: warningHex.length > 0 ? 'hex-warning' : 'heuristic-score',
+          hexMatches: hexResult.matches,
+          heuristicScore: heuristicScore.score,
         },
       }),
     };
@@ -228,13 +372,18 @@ function createLocalHeuristicResult(file, fileHash) {
   return {
     detected: false,
     signature: null,
+    hexMatches: hexResult.matches,
+    deepAnalysis,
     provider: createProviderResult({
       id: 'local-heuristic',
       name: 'Local Heuristic',
       verdict: 'CLEAN',
-      message: 'No local heuristic detection found.',
+      message: 'No local heuristic or hex signature detection found.',
       metadata: {
         sha256: fileHash,
+        detectionMethod: 'hex-clean',
+        hexMatches: hexResult.matches,
+        heuristicScore: heuristicScore.score,
       },
     }),
   };
@@ -670,6 +819,10 @@ async function scanFile(file, options = {}) {
     message: combined.message,
     method: combined.method,
     providers: combined.providers,
+    hexMatches: localHeuristic.hexMatches || [],
+    deepAnalysis: localHeuristic.deepAnalysis || null,
+    iocs: localHeuristic.deepAnalysis?.iocs || null,
+    mitreTechniques: localHeuristic.deepAnalysis?.mitreTechniques || [],
     hybridAnalysis: {
       enabled: hybridAnalysisConfig.enabled,
       configured: hybridAnalysisConfig.isConfigured,
@@ -698,6 +851,22 @@ async function scanFile(file, options = {}) {
   };
 
   logScanResult(result);
+
+  try {
+    recordIntelScan(result);
+    if (result.status === 'INFECTED' || result.status === 'REVIEW') {
+      broadcast({
+        category: 'manual_scan',
+        severity: result.status === 'INFECTED' ? 'critical' : 'warning',
+        filename: result.filename,
+        sha256: result.sha256,
+        score: result.deepAnalysis?.heuristicScore?.score || 0,
+        verdict: result.deepAnalysis?.heuristicScore?.verdict || null,
+        mitre: (result.mitreTechniques || []).slice(0, 5).map((t) => t.id),
+      });
+    }
+  } catch { /* don't fail scan on broadcast error */ }
+
   return result;
 }
 

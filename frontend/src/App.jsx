@@ -1,6 +1,19 @@
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import './App.css';
+import './AppleOverrides.css';
 import ContentFilterPage from './ContentFilterPage.jsx';
+import {
+  MitrePage,
+  ThreatIntelPage,
+  HoneypotsPage,
+  RulesPage,
+  LiveAlertsBanner,
+  useLiveAlerts,
+  EntropyHeatmap,
+  IocDisplay,
+  PeDisplay,
+  MitreChips,
+} from './IntelligencePages.jsx';
 
 const POLL_INTERVAL = 8000;
 const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -17,7 +30,12 @@ const NAV_ITEMS = [
   { id: 'firewall', label: 'Firewall', icon: 'shield-shaded' },
   { id: 'filtering', label: 'Filtering', icon: 'funnel' },
   { id: 'protection', label: 'Protection', icon: 'activity' },
+  { id: 'mitre', label: 'MITRE ATT&CK', icon: 'crosshair' },
+  { id: 'intel', label: 'Threat Intel', icon: 'globe' },
+  { id: 'honeypots', label: 'Honeypots', icon: 'bug' },
+  { id: 'rules', label: 'Custom Rules', icon: 'code-square' },
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
+  { id: 'signal', label: 'Signal', icon: 'broadcast' },
   { id: 'events', label: 'Events', icon: 'terminal' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
@@ -882,6 +900,134 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
   );
 }
 
+function DeepAnalysisPanel({ deepAnalysis }) {
+  if (!deepAnalysis) {
+    return null;
+  }
+
+  const { entropyResult, evasionResult, injectionResult, heuristicScore } = deepAnalysis;
+  if (!entropyResult && !evasionResult && !injectionResult && !heuristicScore) {
+    return null;
+  }
+
+  const score = heuristicScore?.score ?? 0;
+  const verdict = heuristicScore?.verdict || 'MINIMAL_RISK';
+  const verdictClass = verdict === 'HIGH_RISK'
+    ? 'deep-score--high'
+    : verdict === 'MEDIUM_RISK'
+      ? 'deep-score--medium'
+      : verdict === 'LOW_RISK'
+        ? 'deep-score--low'
+        : 'deep-score--minimal';
+
+  const indicators = Array.isArray(evasionResult?.indicators) ? evasionResult.indicators : [];
+  const codeCaves = Array.isArray(injectionResult?.codeCaves) ? injectionResult.codeCaves : [];
+  const appended = Array.isArray(injectionResult?.appendedPayloads) ? injectionResult.appendedPayloads : [];
+  const polyglot = Array.isArray(injectionResult?.polyglot) ? injectionResult.polyglot : [];
+  const reasons = Array.isArray(heuristicScore?.reasons) ? heuristicScore.reasons : [];
+
+  return (
+    <div className="deep-analysis">
+      <div className="deep-analysis__header">
+        <span className="panel-kicker">Deep Analysis (4-Layer Heuristic Engine)</span>
+        <div className={`deep-score ${verdictClass}`}>
+          <strong>{score}/100</strong>
+          <span>{verdict.replace('_', ' ')}</span>
+        </div>
+      </div>
+
+      <div className="deep-analysis__grid">
+        {/* MODUL 1: Behavioral / Heuristic Score */}
+        <div className="deep-card">
+          <p className="deep-card__title">1. Heuristic Score Engine</p>
+          <p className="deep-card__metric">{score}<span>/100</span></p>
+          <p className="deep-card__verdict">{verdict.replace('_', ' ')}</p>
+          {reasons.length > 0 ? (
+            <ul className="deep-card__list">
+              {reasons.slice(0, 5).map((reason, idx) => (
+                <li key={`reason-${idx}`}>{reason}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="deep-card__empty">Niciun semnal de risc.</p>
+          )}
+        </div>
+
+        {/* MODUL 2: Entropy / Behavioral Analysis */}
+        <div className="deep-card">
+          <p className="deep-card__title">2. Entropy / Behavioral</p>
+          <p className="deep-card__metric">
+            {entropyResult?.overall?.toFixed(2) ?? '0.00'}<span>/8.00</span>
+          </p>
+          <p className="deep-card__verdict">
+            {entropyResult?.verdict?.replace(/_/g, ' ') || 'normal'}
+          </p>
+          <div className="deep-card__sparkline">
+            {(entropyResult?.blocks || []).slice(0, 32).map((block, idx) => (
+              <span
+                key={`bar-${idx}`}
+                className={`deep-spark-bar ${block.entropy > 7 ? 'deep-spark-bar--hot' : block.entropy > 5 ? 'deep-spark-bar--warm' : ''}`}
+                style={{ height: `${Math.max(2, block.entropy * 5)}px` }}
+                title={`Block @${block.offsetHex} — entropy ${block.entropy}`}
+              />
+            ))}
+          </div>
+          <p className="deep-card__note">
+            {Math.round((entropyResult?.highEntropyRatio || 0) * 100)}% blocuri cu entropie &gt; 7.0
+          </p>
+        </div>
+
+        {/* MODUL 3: Evasion Technique Detection */}
+        <div className="deep-card">
+          <p className="deep-card__title">3. Evasion Detection</p>
+          <p className="deep-card__metric">{indicators.length}<span> indicator{indicators.length === 1 ? '' : 'i'}</span></p>
+          {indicators.length > 0 ? (
+            <div className="deep-card__chips">
+              {indicators.map((ind, idx) => (
+                <span
+                  key={`ev-${idx}`}
+                  className={`deep-chip deep-chip--${ind.severity}`}
+                  title={ind.description}
+                >
+                  {ind.category.replace(/_/g, ' ')} ({ind.matches?.length || 0})
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="deep-card__empty">Nicio tehnică de evaziune detectată.</p>
+          )}
+        </div>
+
+        {/* MODUL 4: Sub-byte Injection Detection */}
+        <div className="deep-card">
+          <p className="deep-card__title">4. Sub-byte Injection</p>
+          <p className="deep-card__metric">
+            {codeCaves.length + appended.length + polyglot.length}<span> hit{codeCaves.length + appended.length + polyglot.length === 1 ? '' : 'uri'}</span>
+          </p>
+          {codeCaves.length > 0 ? (
+            <p className="deep-card__note">
+              <strong>{codeCaves.length}</strong> code cave(uri) — max {codeCaves[0]?.size} octeți @ {codeCaves[0]?.offsetHex}
+            </p>
+          ) : null}
+          {appended.length > 0 ? (
+            <p className="deep-card__note">
+              <strong>{appended.length}</strong> payload(uri) după EOF: {appended.map((a) => a.type).join(', ')}
+            </p>
+          ) : null}
+          {polyglot.length > 0 ? (
+            <p className="deep-card__note">
+              Polyglot: {polyglot[0]?.formats?.join(' + ')}
+            </p>
+          ) : null}
+          {codeCaves.length + appended.length + polyglot.length === 0 ? (
+            <p className="deep-card__empty">Nicio injecție sub-byte detectată.</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan, onSubmitUrl }) {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [scanError, setScanError] = useState('');
@@ -1150,6 +1296,61 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
                     {provider.name}: {provider.verdict || provider.status}
                   </span>
                 ))}
+              </div>
+
+              {Array.isArray(result.hexMatches) && result.hexMatches.length > 0 ? (
+                <div className="hex-match-row">
+                  {result.hexMatches.map((match) => (
+                    <span
+                      className={`hex-chip hex-chip--${match.severity}`}
+                      key={match.name}
+                      title={`${match.description} — offset ${match.offsetHex}`}
+                    >
+                      {match.name} @{match.offsetHex}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              <DeepAnalysisPanel deepAnalysis={result.deepAnalysis} />
+
+              {result.deepAnalysis?.entropyResult?.blocks?.length > 0 ? (
+                <div className="heatmap-row">
+                  <span className="panel-kicker">Entropy Heatmap (per 4KB block)</span>
+                  <EntropyHeatmap blocks={result.deepAnalysis.entropyResult.blocks} />
+                </div>
+              ) : null}
+
+              <MitreChips techniques={result.mitreTechniques} />
+              <IocDisplay iocs={result.iocs} />
+              <PeDisplay peResult={result.deepAnalysis?.peResult} />
+
+              <div className="form-actions">
+                <button
+                  className="control-btn control-btn--ghost"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(buildApiUrl('/intel/report/pdf'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${runtimeSessionToken}` },
+                        body: JSON.stringify({ scanResult: result }),
+                      });
+                      if (!res.ok) throw new Error('PDF generation failed');
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `report_${(result.filename || 'scan').replace(/[^\w.-]/g, '_')}.pdf`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    } catch (err) {
+                      alert('PDF error: ' + err.message);
+                    }
+                  }}
+                >
+                  📄 Download PDF Report
+                </button>
               </div>
 
               {result.hybridAnalysis?.quickScan ? (
@@ -1745,6 +1946,169 @@ function ControlsPage({ data, error, loading, onRefresh, onToggle, savingKey }) 
   );
 }
 
+function SnrBar({ snr, thresholds }) {
+  const max = 35;
+  const pct = Math.max(0, Math.min(100, (snr / max) * 100));
+  const color = snr > (thresholds?.primary || 20)
+    ? 'var(--accent-green)'
+    : snr > (thresholds?.fallback || 10)
+      ? 'var(--accent-amber)'
+      : 'var(--accent-red)';
+
+  return (
+    <div className="snr-bar-wrap">
+      <div className="snr-bar-track">
+        <div className="snr-bar-fill" style={{ width: `${pct}%`, background: color }} />
+        <div className="snr-bar-marker" style={{ left: `${((thresholds?.primary || 20) / max) * 100}%` }} title="Primary threshold" />
+        <div className="snr-bar-marker snr-bar-marker--amber" style={{ left: `${((thresholds?.fallback || 10) / max) * 100}%` }} title="Fallback threshold" />
+      </div>
+      <div className="snr-bar-labels">
+        <span>0 dB</span>
+        <span className="snr-value">{snr.toFixed(1)} dB</span>
+        <span>35 dB</span>
+      </div>
+    </div>
+  );
+}
+
+function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset }) {
+  const signal = data?.signal || null;
+  const activityLog = data?.activityLog || {};
+  const recentActivity = Array.isArray(activityLog.recent) ? activityLog.recent : [];
+  const summary = activityLog.summary || {};
+  const mode = signal?.mode || null;
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        breadcrumb="Containment Atlas / Signal"
+        title="Signal &amp; Communications"
+        subtitle="Monitorizare SNR în timp real, fallback automat LoRa/GSM și istoricul activității sistemului."
+        action={(
+          <>
+            <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
+              Refresh
+            </button>
+            <button className="control-btn control-btn--amber" onClick={onInjectNoise} type="button">
+              Inject Noise
+            </button>
+            <button className="control-btn" onClick={onReset} type="button">
+              Reset Signal
+            </button>
+          </>
+        )}
+      />
+
+      <div className="panel-grid panel-grid--stats">
+        <StatCard
+          accent={signal?.mode?.color === 'green' ? 'green' : signal?.mode?.color === 'red' ? 'red' : 'amber'}
+          label="SNR"
+          value={signal ? `${signal.snr.toFixed(1)} dB` : '-'}
+          meta={signal?.quality || '-'}
+        />
+        <StatCard accent="neutral" label="Channel Mode" value={mode?.label || '-'} />
+        <StatCard accent="neutral" label="Technology" value={mode?.technology || '-'} />
+        <StatCard accent="neutral" label="Band" value={mode?.band || '-'} />
+        <StatCard accent="red" label="Alerts" value={formatInteger(summary.alerts)} />
+        <StatCard accent="amber" label="Warnings" value={formatInteger(summary.warnings)} />
+      </div>
+
+      {error ? <p className="form-message form-message--error">{error}</p> : null}
+      {loading && !data ? <EmptyState text="Loading signal data..." /> : null}
+
+      {signal ? (
+        <div className="panel-grid panel-grid--split">
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Canal de Comunicație</p>
+                <h3>SNR Monitor</h3>
+              </div>
+              <StatusBadge value={mode?.fallbackActive ? 'LoRa Active' : mode?.id === 'degraded' ? 'Degraded' : 'Online'} />
+            </div>
+
+            <SnrBar snr={signal.snr} thresholds={signal.thresholds} />
+
+            <div className="detail-grid" style={{ marginTop: '1rem' }}>
+              <DataPair label="SNR Curent" value={`${signal.snr.toFixed(1)} dB`} />
+              <DataPair label="Calitate" value={signal.quality} />
+              <DataPair label="Prag Primar" value={`> ${signal.thresholds.primary} dB`} />
+              <DataPair label="Prag Fallback" value={`< ${signal.thresholds.fallback} dB`} />
+              <DataPair label="Poll-uri" value={formatInteger(signal.ticks)} />
+              <DataPair label="Ultima actualizare" value={formatDateTime(signal.lastUpdateAt)} />
+            </div>
+          </section>
+
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Fallback Mechanism</p>
+                <h3>Canal Activ</h3>
+              </div>
+            </div>
+
+            <div className={`signal-channel-card signal-channel-card--${mode?.color || 'neutral'}`}>
+              <div className="signal-channel-icon">
+                <i className={`bi bi-${mode?.id === 'lora' ? 'reception-4' : mode?.id === 'degraded' ? 'reception-2' : 'wifi'}`} />
+              </div>
+              <div>
+                <h4>{mode?.label}</h4>
+                <p className="module-desc">{mode?.description}</p>
+                <div className="provider-chip-row" style={{ marginTop: '0.5rem' }}>
+                  <span className="meta-chip">{mode?.technology}</span>
+                  <span className="meta-chip">{mode?.band}</span>
+                  {mode?.fallbackActive ? <span className="meta-chip meta-chip--alert">OUT-OF-BAND</span> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="detail-grid" style={{ marginTop: '1rem' }}>
+              <DataPair label="LoRa Activat la" value={formatDateTime(signal.loraActivatedAt) !== '-' ? formatDateTime(signal.loraActivatedAt) : 'N/A'} />
+              <DataPair label="LoRa Dezactivat la" value={formatDateTime(signal.loraDeactivatedAt) !== '-' ? formatDateTime(signal.loraDeactivatedAt) : 'N/A'} />
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      <section className="panel-card page-section-gap">
+        <div className="panel-card__header">
+          <div>
+            <p className="panel-kicker">Istoric Detaliat</p>
+            <h3>Activity Log</h3>
+          </div>
+          <div className="provider-chip-row">
+            <span className="meta-chip meta-chip--alert">ALERT: {formatInteger(summary.alerts)}</span>
+            <span className="meta-chip">WARN: {formatInteger(summary.warnings)}</span>
+            <span className="meta-chip">INFO: {formatInteger(summary.info)}</span>
+          </div>
+        </div>
+
+        {recentActivity.length === 0 ? <EmptyState text="Nicio activitate înregistrată încă. Fă o scanare pentru a popula logul." /> : null}
+
+        {recentActivity.length > 0 ? (
+          <div className="stack-list">
+            {recentActivity.map((entry) => (
+              <article className="event-card" key={entry.id}>
+                <div className="event-card__top">
+                  <div className="event-card__title">
+                    <p className="panel-kicker">{entry.source}</p>
+                    <h3>{entry.action}</h3>
+                  </div>
+                  <span className={`severity-pill ${entry.level === 'ALERT' ? 'severity-pill--critical' : entry.level === 'WARNING' ? 'severity-pill--warning' : 'severity-pill--info'}`}>
+                    {entry.level}
+                  </span>
+                </div>
+                <p className="event-card__detail">{entry.detail}</p>
+                <p className="event-card__time">{formatDateTime(entry.timestamp)}</p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [serverData, setServerData] = useState(null);
@@ -1776,7 +2140,22 @@ export default function App() {
     lastResult: null,
   });
   const [eventsData, setEventsData] = useState({ events: [], loading: false, error: '' });
+  const [mitreData, setMitreData] = useState({ matrix: [], intel: null, loading: false });
+  const [intelData, setIntelData] = useState({ intel: null, loading: false });
+  const [honeypotsData, setHoneypotsData] = useState({ canaries: [], events: [], loading: false });
+  const [rulesData, setRulesData] = useState({ rules: '', loading: false });
+
+  // ─── Live Alerts via WebSocket ─────────────────────────────────────────────
+  const wsUrl = (() => {
+    if (typeof window === 'undefined') return null;
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const host = isLocal ? 'localhost:5000' : window.location.host;
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${host}/ws/alerts`;
+  })();
+  const { alerts: liveAlerts, connected: wsConnected } = useLiveAlerts(wsUrl);
   const [controlsData, setControlsData] = useState({ controls: null, loading: false, savingKey: '', error: '' });
+  const [signalData, setSignalData] = useState({ data: null, loading: false, error: '' });
   const [contentFilterData, setContentFilterData] = useState({
     policy: null,
     categories: [],
@@ -1878,6 +2257,97 @@ export default function App() {
     }
   }, []);
 
+  const loadMitre = useCallback(async () => {
+    setMitreData((current) => ({ ...current, loading: true }));
+    try {
+      const [matrixRes, intelRes] = await Promise.all([
+        requestJson('/intel/mitre/matrix'),
+        requestJson('/intel/intel/dashboard'),
+      ]);
+      setMitreData({ matrix: matrixRes?.tactics || [], intel: intelRes?.intel || null, loading: false });
+    } catch {
+      setMitreData((c) => ({ ...c, loading: false }));
+    }
+  }, []);
+
+  const loadIntel = useCallback(async () => {
+    setIntelData((current) => ({ ...current, loading: true }));
+    try {
+      const payload = await requestJson('/intel/intel/dashboard');
+      setIntelData({ intel: payload?.intel || null, loading: false });
+    } catch {
+      setIntelData((c) => ({ ...c, loading: false }));
+    }
+  }, []);
+
+  const handleResetIntel = useCallback(async () => {
+    try {
+      await requestJson('/intel/intel/reset', { method: 'POST' });
+      await loadIntel();
+    } catch { /* ignore */ }
+  }, [loadIntel]);
+
+  const loadHoneypots = useCallback(async () => {
+    setHoneypotsData((current) => ({ ...current, loading: true }));
+    try {
+      const payload = await requestJson('/intel/honeypots');
+      setHoneypotsData({ canaries: payload?.canaries || [], events: payload?.events || [], loading: false });
+    } catch {
+      setHoneypotsData((c) => ({ ...c, loading: false }));
+    }
+  }, []);
+
+  const handlePlantHoneypots = useCallback(async (targetDir) => {
+    try {
+      await requestJson('/intel/honeypots/plant', { method: 'POST', body: JSON.stringify({ targetDir }) });
+      await loadHoneypots();
+    } catch { /* ignore */ }
+  }, [loadHoneypots]);
+
+  const handleCheckHoneypots = useCallback(async () => {
+    try {
+      await requestJson('/intel/honeypots/check', { method: 'POST' });
+      await loadHoneypots();
+    } catch { /* ignore */ }
+  }, [loadHoneypots]);
+
+  const handleRemoveAllHoneypots = useCallback(async () => {
+    try {
+      await fetch(buildApiUrl('/intel/honeypots/all'), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${runtimeSessionToken}` },
+      });
+      await loadHoneypots();
+    } catch { /* ignore */ }
+  }, [loadHoneypots]);
+
+  const loadRules = useCallback(async () => {
+    setRulesData((current) => ({ ...current, loading: true }));
+    try {
+      const payload = await requestJson('/intel/rules');
+      setRulesData({ rules: payload?.rules || '', loading: false });
+    } catch {
+      setRulesData((c) => ({ ...c, loading: false }));
+    }
+  }, []);
+
+  const handleSaveRules = useCallback(async (text) => {
+    await requestJson('/intel/rules', { method: 'PUT', body: JSON.stringify({ rules: text }) });
+    await loadRules();
+  }, [loadRules]);
+
+  const handleTestRules = useCallback(async (file, text) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('rules', text);
+    const res = await fetch(buildApiUrl('/intel/rules/test'), {
+      method: 'POST',
+      body: fd,
+      headers: { Authorization: `Bearer ${runtimeSessionToken}` },
+    });
+    return res.json();
+  }, []);
+
   const loadControls = useCallback(async () => {
     setControlsData((current) => ({ ...current, loading: true, error: '' }));
     try {
@@ -1887,6 +2357,30 @@ export default function App() {
       setControlsData((current) => ({ ...current, loading: false, error: error.message || 'Could not load controls.' }));
     }
   }, []);
+
+  const loadSignal = useCallback(async () => {
+    setSignalData((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const payload = await requestJson('/signal');
+      setSignalData({ data: payload, loading: false, error: '' });
+    } catch (error) {
+      setSignalData((current) => ({ ...current, loading: false, error: error.message || 'Could not load signal data.' }));
+    }
+  }, []);
+
+  const handleInjectNoise = useCallback(async () => {
+    try {
+      await requestJson('/signal/inject-noise', { method: 'POST' });
+      await loadSignal();
+    } catch {}
+  }, [loadSignal]);
+
+  const handleResetSignal = useCallback(async () => {
+    try {
+      await requestJson('/signal/reset', { method: 'POST' });
+      await loadSignal();
+    } catch {}
+  }, [loadSignal]);
 
   const loadContentFilter = useCallback(async () => {
     setContentFilterData((current) => ({ ...current, loading: true, error: '', message: '' }));
@@ -2190,6 +2684,15 @@ export default function App() {
   }, [fetchDashboard]);
 
   useEffect(() => {
+    if (activePage !== 'signal') {
+      return undefined;
+    }
+
+    const signalInterval = setInterval(loadSignal, 3000);
+    return () => clearInterval(signalInterval);
+  }, [activePage, loadSignal]);
+
+  useEffect(() => {
     if (activePage === 'firewall') {
       loadFirewall();
     }
@@ -2210,6 +2713,22 @@ export default function App() {
       loadEvents();
     }
 
+    if (activePage === 'mitre') {
+      loadMitre();
+    }
+
+    if (activePage === 'intel') {
+      loadIntel();
+    }
+
+    if (activePage === 'honeypots') {
+      loadHoneypots();
+    }
+
+    if (activePage === 'rules') {
+      loadRules();
+    }
+
     if (activePage === 'controls') {
       loadControls();
     }
@@ -2217,7 +2736,11 @@ export default function App() {
     if (activePage === 'filtering') {
       loadContentFilter();
     }
-  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadProtection, loadTelemetry]);
+
+    if (activePage === 'signal') {
+      loadSignal();
+    }
+  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadProtection, loadSignal, loadTelemetry, loadMitre, loadIntel, loadHoneypots, loadRules]);
 
   return (
     <div className="control-app">
@@ -2231,7 +2754,12 @@ export default function App() {
         ) : null}
 
         {connStatus === 'connecting' ? <div className="conn-banner conn-banner--info">Connecting to backend...</div> : null}
+        <LiveAlertsBanner alerts={liveAlerts} />
         {activePage === 'dashboard' ? <Dashboard data={serverData} onNavigate={setActivePage} onRefresh={fetchDashboard} /> : null}
+        {activePage === 'mitre' ? <MitrePage matrix={mitreData.matrix} intel={mitreData.intel} loading={mitreData.loading} onRefresh={loadMitre} /> : null}
+        {activePage === 'intel' ? <ThreatIntelPage intel={intelData.intel} loading={intelData.loading} onRefresh={loadIntel} onReset={handleResetIntel} /> : null}
+        {activePage === 'honeypots' ? <HoneypotsPage data={honeypotsData} loading={honeypotsData.loading} onRefresh={loadHoneypots} onPlant={handlePlantHoneypots} onCheck={handleCheckHoneypots} onRemove={handleRemoveAllHoneypots} /> : null}
+        {activePage === 'rules' ? <RulesPage rulesText={rulesData.rules} onSave={handleSaveRules} onTest={handleTestRules} /> : null}
         {activePage === 'platform' ? (
           <PlatformPage data={telemetryData.data} error={telemetryData.error} loading={telemetryData.loading} onRefresh={loadTelemetry} />
         ) : null}
@@ -2285,6 +2813,16 @@ export default function App() {
         ) : null}
         {activePage === 'telemetry' ? (
           <TelemetryPage data={telemetryData.data} error={telemetryData.error} loading={telemetryData.loading} onRefresh={loadTelemetry} />
+        ) : null}
+        {activePage === 'signal' ? (
+          <SignalPage
+            data={signalData.data}
+            error={signalData.error}
+            loading={signalData.loading}
+            onInjectNoise={handleInjectNoise}
+            onRefresh={loadSignal}
+            onReset={handleResetSignal}
+          />
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
         {activePage === 'controls' ? (
