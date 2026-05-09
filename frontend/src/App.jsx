@@ -539,6 +539,34 @@ function Dashboard({ data, onNavigate, onRefresh }) {
   const maintenanceMode = Boolean(controls.maintenanceMode);
   const protectionStatus = formatDisplay(data?.antivirus, 'Protected');
   const activeControls = Object.entries(controls).filter(([key, value]) => key !== 'maintenanceMode' && value === true).length;
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportPdf() {
+    setExporting(true);
+    try {
+      const urls = buildApiCandidates('/report/security');
+      let response;
+      for (const url of urls) {
+        try {
+          response = await fetch(url, {
+            headers: { Authorization: `Bearer ${runtimeSessionToken}` },
+          });
+          if (response.ok) break;
+        } catch { /* try next */ }
+      }
+      if (!response?.ok) throw new Error('Could not generate report.');
+      const blob = await response.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `containment-atlas-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div className="page-content">
@@ -553,6 +581,9 @@ function Dashboard({ data, onNavigate, onRefresh }) {
             </span>
             <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
               Refresh
+            </button>
+            <button className="control-btn" onClick={handleExportPdf} disabled={exporting} type="button">
+              {exporting ? 'Generating…' : 'Export PDF'}
             </button>
           </>
         )}

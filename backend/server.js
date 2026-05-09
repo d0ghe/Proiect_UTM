@@ -40,6 +40,7 @@ app.use('/api/cleanup',        require('./routes/cleanup'));
 app.use('/api/content-filter', require('./routes/contentFilter'));
 app.use('/api/signal',         require('./routes/signal'));
 app.use('/api/intel',          require('./routes/intelligence'));
+app.use('/api/report',         require('./routes/report'));
 
 const server = http.createServer(app);
 attachWebSocket(server);
