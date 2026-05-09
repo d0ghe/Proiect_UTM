@@ -7,9 +7,9 @@ const {
   deleteFirewallRule,
   getFirewallRules,
 } = require('../store/runtimeState');
+const { applyOsRule, removeOsRule } = require('../utils/osFirewall');
 
 const router = express.Router();
-
 router.use(verifyToken);
 
 router.get('/rules', (_req, res) => {
@@ -18,66 +18,54 @@ router.get('/rules', (_req, res) => {
 
 router.get('/summary', (_req, res) => {
   const rules = getFirewallRules();
-  const activeRules = countActiveFirewallRules();
-  const blockedRules = rules.filter(
-    (rule) => String(rule.status).toLowerCase() === 'active' && String(rule.action).toUpperCase() === 'BLOCK',
-  ).length;
-  const allowedRules = rules.filter(
-    (rule) => String(rule.status).toLowerCase() === 'active' && String(rule.action).toUpperCase() === 'ALLOW',
-  ).length;
-
   res.json({
     success: true,
     summary: {
-      total: rules.length,
-      active: activeRules,
-      blockedRules,
-      allowedRules,
+      total:        rules.length,
+      active:       countActiveFirewallRules(),
+      blockedRules: rules.filter((r) => String(r.status).toLowerCase() === 'active' && String(r.action).toUpperCase() === 'BLOCK').length,
+      allowedRules: rules.filter((r) => String(r.status).toLowerCase() === 'active' && String(r.action).toUpperCase() === 'ALLOW').length,
     },
   });
 });
 
-router.post('/rules', (req, res) => {
+router.post('/rules', async (req, res) => {
   const { action, protocol, port, ip, status, desc } = req.body || {};
 
-  if (!port || Number(port) <= 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'A valid port is required.',
-    });
+  const portNum = Number(port);
+  if (!port || !Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
+    return res.status(400).json({ success: false, message: 'Port invalid (1–65535).' });
   }
 
-  const rule = addFirewallRule({
-    action,
-    protocol,
-    port,
-    ip,
-    status,
-    desc,
-  });
+  const rule = addFirewallRule({ action, protocol, port: portNum, ip, status, desc });
+
+  // Aplică regula în Windows Firewall via PowerShell (necesită admin)
+  // Proxy-ul HTTP o preia automat din store pentru traficul browser
+  const osRes = await applyOsRule(rule);
 
   res.status(201).json({
     success: true,
-    message: 'Rule added.',
+    message: 'Regulă adăugată.',
     rule,
+    os: { applied: osRes.osApplied, note: osRes.message },
   });
 });
 
-router.delete('/rules/:id', (req, res) => {
-  const removedRule = deleteFirewallRule(Number(req.params.id));
-
-  if (!removedRule) {
-    return res.status(404).json({
-      success: false,
-      message: 'Rule not found.',
-    });
+router.delete('/rules/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ success: false, message: 'ID invalid.' });
   }
 
-  res.json({
-    success: true,
-    message: `Rule ${removedRule.id} removed.`,
-    rule: removedRule,
-  });
+  const removedRule = deleteFirewallRule(id);
+  if (!removedRule) {
+    return res.status(404).json({ success: false, message: `Regula ${id} nu există.` });
+  }
+
+  // Elimină și din Windows Firewall
+  await removeOsRule(removedRule);
+
+  res.json({ success: true, message: `Regula portului ${removedRule.port} ștearsă.`, rule: removedRule });
 });
 
 module.exports = router;
