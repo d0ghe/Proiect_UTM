@@ -2201,6 +2201,32 @@ function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset })
   );
 }
 
+import {
+  ComposableMap,
+  Geographies,
+  Geography,
+  Marker,
+  Annotation,
+} from 'react-simple-maps';
+
+const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+// Coordonate centru tari (lon, lat) - Romania e destinatia
+const DEST = [25.0, 45.9]; // Romania
+const COUNTRY_COORDS_UI = {
+  CN:[104.2,35.9], RU:[105.3,61.5], KP:[127.5,40.3], IR:[53.7,32.4],
+  BY:[28.0,53.7],  CU:[-79.5,21.5], SY:[38.3,35.0],  SD:[29.9,12.9],
+  MM:[95.9,21.9],  VN:[108.3,14.1], PK:[69.3,30.4],  NG:[8.7,9.1],
+  IN:[78.7,20.6],  BR:[-51.9,-14.2],UA:[31.2,48.4],  TR:[35.2,39.1],
+  ID:[113.9,-0.8], EG:[30.8,26.8],  TH:[100.5,15.9], PH:[122.9,12.9],
+  BD:[90.4,23.7],  MX:[-102.5,23.6],VE:[-66.6,6.4],  IQ:[43.7,33.2],
+  AF:[67.7,33.9],  LY:[17.2,26.3],  SO:[46.2,6.1],   YE:[48.5,15.6],
+  HK:[114.2,22.4], TW:[120.9,23.7], US:[-95.7,37.1], GB:[-3.4,55.4],
+  DE:[10.5,51.2],  FR:[2.2,46.2],   NL:[5.3,52.3],   RO:[25.0,45.9],
+  PL:[19.1,51.9],  KZ:[67.0,48.0],  UZ:[63.9,41.4],  AZ:[47.6,40.1],
+  GE:[43.4,42.3],  NG:[8.7,9.1],    LY:[17.2,26.3],
+};
+
 const COUNTRY_LIST = [
   { code: 'CN', name: 'China' }, { code: 'RU', name: 'Russia' }, { code: 'KP', name: 'North Korea' },
   { code: 'IR', name: 'Iran' }, { code: 'BY', name: 'Belarus' }, { code: 'CU', name: 'Cuba' },
@@ -2214,7 +2240,7 @@ const COUNTRY_LIST = [
   { code: 'YE', name: 'Yemen' }, { code: 'HK', name: 'Hong Kong' }, { code: 'TW', name: 'Taiwan' },
   { code: 'US', name: 'United States' }, { code: 'GB', name: 'United Kingdom' }, { code: 'DE', name: 'Germany' },
   { code: 'FR', name: 'France' }, { code: 'NL', name: 'Netherlands' }, { code: 'RO', name: 'Romania' },
-  { code: 'PL', name: 'Poland' }, { code: 'UA', name: 'Ukraine' }, { code: 'KZ', name: 'Kazakhstan' },
+  { code: 'PL', name: 'Poland' }, { code: 'KZ', name: 'Kazakhstan' },
   { code: 'UZ', name: 'Uzbekistan' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'GE', name: 'Georgia' },
 ];
 
@@ -2224,10 +2250,131 @@ function countryFlag(code) {
   return [...code.toUpperCase()].map((ch) => String.fromCodePoint(0x1F1E6 - 65 + ch.charCodeAt(0))).join('');
 }
 
-function GeoFilterPage({ data, onUpdate, onCheck, onRefresh }) {
-  const [search, setSearch]       = useState('');
-  const [checkHost, setCheckHost] = useState('');
+/* Animatie arc de atac SVG */
+function AttackArc({ from, progress }) {
+  const [x1, y1] = from;
+  const [x2, y2] = DEST;
+  const mx = (x1 + x2) / 2;
+  const my = Math.min(y1, y2) - 30;
+  const d = `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`;
+  return (
+    <path
+      d={d}
+      fill="none"
+      stroke="#ff453a"
+      strokeWidth={1.2}
+      strokeOpacity={0.7 * (1 - progress)}
+      strokeDasharray="6 3"
+      style={{ pointerEvents: 'none' }}
+    />
+  );
+}
+
+function AttackMap({ attacks }) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 80);
+    return () => clearInterval(id);
+  }, []);
+
+  // Ultimele 8 atacuri cu pozitie
+  const visible = attacks
+    .filter((a) => COUNTRY_COORDS_UI[a.country])
+    .slice(0, 8);
+
+  return (
+    <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
+      <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1e1e1e', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Live Threat Map</span>
+        <span style={{ fontSize: '0.75rem', color: '#ff453a' }}>{attacks.length > 0 ? `${attacks.length} blocked` : 'No attacks yet'}</span>
+      </div>
+      <ComposableMap
+        projectionConfig={{ scale: 140, center: [10, 20] }}
+        style={{ width: '100%', height: 'auto' }}
+      >
+        <Geographies geography={GEO_URL}>
+          {({ geographies }) =>
+            geographies.map((geo) => (
+              <Geography
+                key={geo.rsmKey}
+                geography={geo}
+                fill="#1a1a1a"
+                stroke="#2a2a2a"
+                strokeWidth={0.4}
+                style={{ default: { outline: 'none' }, hover: { outline: 'none' }, pressed: { outline: 'none' } }}
+              />
+            ))
+          }
+        </Geographies>
+
+        {/* Linii de atac animate */}
+        {visible.map((atk, i) => {
+          const progress = ((tick * 0.04) + i * 0.3) % 1;
+          return (
+            <Annotation
+              key={`arc-${i}`}
+              subject={atk.coords}
+              dx={0}
+              dy={0}
+            >
+              <AttackArc from={atk.coords} progress={progress} />
+            </Annotation>
+          );
+        })}
+
+        {/* Dot sursa atac */}
+        {visible.map((atk, i) => (
+          <Marker key={`src-${i}`} coordinates={atk.coords}>
+            <circle r={3} fill="#ff453a" fillOpacity={0.9} />
+          </Marker>
+        ))}
+
+        {/* Romania - destinatie */}
+        <Marker coordinates={DEST}>
+          <circle r={5} fill="#0a84ff" stroke="#fff" strokeWidth={1.5} />
+        </Marker>
+      </ComposableMap>
+
+      {/* Feed atacuri recente */}
+      {attacks.length > 0 && (
+        <div style={{ borderTop: '1px solid #1e1e1e', maxHeight: '120px', overflowY: 'auto' }}>
+          {attacks.slice(0, 10).map((atk, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 1.25rem', borderBottom: '1px solid #111', fontSize: '0.78rem' }}>
+              <span style={{ color: '#ff453a', fontWeight: 700 }}>{countryFlag(atk.country)} {atk.country}</span>
+              <span style={{ color: '#636366' }}>→</span>
+              <span style={{ color: '#a0a0a0', flex: 1 }}>{atk.hostname}</span>
+              <span style={{ color: '#444', whiteSpace: 'nowrap' }}>{new Date(atk.timestamp).toLocaleTimeString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GeoFilterPage({ data, onUpdate, onRefresh }) {
+  const [search, setSearch] = useState('');
+  const [attacks, setAttacks] = useState([]);
   const selected = new Set(data.blockedCountries || []);
+
+  // Fetch atacuri la fiecare 3s
+  useEffect(() => {
+    async function fetchAttacks() {
+      try {
+        const urls = buildApiCandidates('/geo-filter/attacks');
+        for (const url of urls) {
+          try {
+            const res = await fetch(url, { headers: { Authorization: `Bearer ${runtimeSessionToken}` } });
+            if (res.ok) { const j = await res.json(); setAttacks(j.attacks || []); break; }
+          } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+    }
+    fetchAttacks();
+    const id = setInterval(fetchAttacks, 3000);
+    return () => clearInterval(id);
+  }, []);
 
   const filtered = UNIQUE_COUNTRY_LIST.filter(
     (c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()),
@@ -2249,19 +2396,24 @@ function GeoFilterPage({ data, onUpdate, onCheck, onRefresh }) {
       <PageHeader
         breadcrumb="Containment Atlas / Geo-Block"
         title="Geographic Blocking"
-        subtitle="Block all outbound traffic to IP ranges associated with specific countries. Works through the HTTP proxy for Chrome/Edge."
-        action={(
-          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
-        )}
+        subtitle="Block all outbound traffic to IP ranges associated with specific countries. Blocked connections appear live on the map."
+        action={<button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>}
       />
 
       {data.error ? <p style={{ color: '#ff453a', marginBottom: '1rem' }}>{data.error}</p> : null}
 
+      {/* Harta */}
+      <AttackMap attacks={attacks} />
+
       {/* Enable toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Geo-Filter {data.enabled ? <span style={{ color: '#34c759' }}>Active</span> : <span style={{ color: '#636366' }}>Inactive</span>}</div>
-          <div style={{ fontSize: '0.8rem', color: '#636366', marginTop: '0.2rem' }}>{selected.size} {selected.size === 1 ? 'country' : 'countries'} selected</div>
+          <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>
+            Geo-Filter {data.enabled ? <span style={{ color: '#34c759' }}>Active</span> : <span style={{ color: '#636366' }}>Inactive</span>}
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#636366', marginTop: '0.2rem' }}>
+            {selected.size} {selected.size === 1 ? 'country' : 'countries'} selected
+          </div>
         </div>
         <button
           className={`control-btn${data.enabled ? '' : ' control-btn--ghost'}`}
@@ -2275,16 +2427,15 @@ function GeoFilterPage({ data, onUpdate, onCheck, onRefresh }) {
 
       {/* Search */}
       <input
-        className="filter-search-input"
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search country…"
-        style={{ width: '100%', marginBottom: '1rem', padding: '0.6rem 0.9rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', color: '#e8e8e8', fontSize: '0.9rem', outline: 'none' }}
+        style={{ width: '100%', marginBottom: '1rem', padding: '0.6rem 0.9rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', color: '#e8e8e8', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
         type="text"
         value={search}
       />
 
       {/* Country grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.6rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.6rem' }}>
         {filtered.map((c) => {
           const active = selected.has(c.code);
           return (
@@ -2309,29 +2460,6 @@ function GeoFilterPage({ data, onUpdate, onCheck, onRefresh }) {
             </button>
           );
         })}
-      </div>
-
-      {/* Check hostname */}
-      <div style={{ padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
-        <div style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Test Hostname</div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <input
-            onChange={(e) => setCheckHost(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && checkHost) onCheck(checkHost); }}
-            placeholder="e.g. baidu.com"
-            style={{ flex: 1, padding: '0.55rem 0.8rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '7px', color: '#e8e8e8', fontSize: '0.88rem', outline: 'none' }}
-            type="text"
-            value={checkHost}
-          />
-          <button className="control-btn control-btn--ghost" disabled={!checkHost} onClick={() => onCheck(checkHost)} type="button">
-            Check
-          </button>
-        </div>
-        {data.checkResult ? (
-          <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: data.checkResult.blocked ? '#ff453a' : '#34c759' }}>
-            <strong>{data.checkResult.hostname}</strong> → {data.checkResult.country || 'Unknown'} — {data.checkResult.blocked ? 'BLOCKED' : 'Allowed'}
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -3089,7 +3217,7 @@ export default function App() {
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
         {activePage === 'geoblocking' ? (
-          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onCheck={handleCheckGeoHost} onRefresh={loadGeoFilter} />
+          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onRefresh={loadGeoFilter} />
         ) : null}
         {activePage === 'controls' ? (
           <ControlsPage

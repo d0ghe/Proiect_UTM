@@ -2,7 +2,7 @@ const express = require('express');
 
 const verifyToken = require('../middleware/verifyToken');
 const { getGeoFilterState, updateGeoFilter } = require('../store/geoFilterStore');
-const { getCountry } = require('../utils/geoFilter');
+const { getCountry, getRecentAttacks } = require('../utils/geoFilter');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -14,6 +14,10 @@ router.get('/', (_req, res) => {
 router.patch('/', (req, res) => {
   const state = updateGeoFilter(req.body || {});
   res.json({ success: true, message: 'Geo-filter policy updated.', ...state });
+});
+
+router.get('/attacks', (_req, res) => {
+  res.json({ success: true, attacks: getRecentAttacks(50) });
 });
 
 router.post('/check', async (req, res) => {
