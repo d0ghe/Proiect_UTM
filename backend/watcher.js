@@ -11,6 +11,12 @@ const { detectSubbyteInjection } = require('./utils/subbyteInjection');
 const { computeHeuristicScore } = require('./utils/heuristicScorer');
 const { extractIOCs } = require('./utils/iocExtractor');
 const { mapToMitre } = require('./utils/mitreMapping');
+const { decodeStrings } = require('./utils/stringDecoder');
+const { analyzeScript } = require('./utils/scriptDeobfuscator');
+const { parsePE } = require('./utils/peParser');
+const { runRules } = require('./utils/yaraEngine');
+const { getRulesText } = require('./store/yaraStore');
+const { isZip, scanArchive } = require('./utils/archiveScanner');
 const { recordFileEvent, setAlertCallback } = require('./utils/ransomwareCanary');
 const { checkCanaries } = require('./utils/honeypot');
 const { recordScan } = require('./utils/threatIntel');
@@ -117,11 +123,16 @@ async function scanFile(filePath) {
       return;
     }
 
-    // Deep heuristic pipeline
-    const hexResult = scanBufferForHexSignatures(fileBuffer);
-    const entropyResult = analyzeEntropy(fileBuffer);
-    const evasionResult = detectEvasion(fileBuffer);
+    // Deep heuristic pipeline (full — identical to manual scan)
+    const hexResult       = scanBufferForHexSignatures(fileBuffer);
+    const entropyResult   = analyzeEntropy(fileBuffer);
+    const evasionResult   = detectEvasion(fileBuffer);
     const injectionResult = detectSubbyteInjection(fileBuffer);
+    const iocs            = extractIOCs(fileBuffer);
+    const stringDecoded   = decodeStrings(fileBuffer);
+    const scriptResult    = analyzeScript(fileBuffer, fileName);
+    const peResult        = parsePE(fileBuffer);
+
     const heuristicScore = computeHeuristicScore({
       hexMatches: hexResult.matches,
       entropyResult,
@@ -129,15 +140,54 @@ async function scanFile(filePath) {
       injectionResult,
     });
 
-    const iocs = extractIOCs(fileBuffer);
+    // YARA rule matching
+    const yaraResult   = runRules(fileBuffer, getRulesText());
+    const yaraCritical = yaraResult.matched.filter((m) => m.severity === 'critical');
+    const yaraScore    = Math.min(yaraCritical.length * 40 + yaraResult.matched.filter((m) => m.severity === 'warning').length * 15, 60);
+
+    heuristicScore.score = Math.min(
+      100,
+      heuristicScore.score
+      + (iocs.suspicionScore || 0)
+      + (stringDecoded.riskContribution || 0)
+      + (scriptResult.riskContribution || 0)
+      + yaraScore,
+    );
+    if (heuristicScore.score >= 70) heuristicScore.verdict = 'HIGH_RISK';
+    else if (heuristicScore.score >= 40) heuristicScore.verdict = 'MEDIUM_RISK';
+    else if (heuristicScore.score >= 15) heuristicScore.verdict = 'LOW_RISK';
+
     const mitreTechniques = mapToMitre({
       evasionIndicators: evasionResult.indicators,
       injectionResult,
       entropyResult,
       iocs,
+      stringDecoded: stringDecoded.findings,
+      scriptObfuscation: scriptResult.findings,
     });
 
     const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    // Archive scanning — detect threats inside ZIPs
+    let archiveThreat = null;
+    if (isZip(fileBuffer)) {
+      try {
+        const entries = await scanArchive(fileBuffer, fileName, async (buf, name) => {
+          const h = scanBufferForHexSignatures(buf);
+          const e = analyzeEntropy(buf);
+          const ev = detectEvasion(buf);
+          const inj = detectSubbyteInjection(buf);
+          const hs = computeHeuristicScore({ hexMatches: h.matches, entropyResult: e, evasionResult: ev, injectionResult: inj });
+          const yr = runRules(buf, getRulesText());
+          hs.score = Math.min(100, hs.score + yr.matched.filter((m) => m.severity === 'critical').length * 40);
+          return { filename: name, status: hs.score >= AUTO_QUARANTINE_THRESHOLD || yr.matched.some((m) => m.severity === 'critical') ? 'INFECTED' : 'CLEAN', score: hs.score };
+        });
+        const infected = entries.filter((e) => e.status === 'INFECTED');
+        if (infected.length > 0) {
+          archiveThreat = `Archive contains ${infected.length} infected entry(ies): ${infected.map((e) => e.filename).join(', ')}`;
+        }
+      } catch { /* non-fatal */ }
+    }
 
     recordScan({
       filename: fileName,
@@ -148,12 +198,19 @@ async function scanFile(filePath) {
     });
 
     const criticalHex = hexResult.matches.filter((m) => m.severity === 'critical');
-    const shouldQuarantine = criticalHex.length > 0 || heuristicScore.score >= AUTO_QUARANTINE_THRESHOLD;
+    const shouldQuarantine = criticalHex.length > 0
+      || yaraCritical.length > 0
+      || archiveThreat !== null
+      || heuristicScore.score >= AUTO_QUARANTINE_THRESHOLD;
 
     if (shouldQuarantine) {
-      const reason = criticalHex.length > 0
-        ? `Critical hex: ${criticalHex[0].name}`
-        : `Heuristic score ${heuristicScore.score}/100 (${heuristicScore.verdict})`;
+      const reason = yaraCritical.length > 0
+        ? `YARA: ${yaraCritical.map((m) => m.name).join(', ')}`
+        : archiveThreat
+          ? archiveThreat
+          : criticalHex.length > 0
+            ? `Critical hex: ${criticalHex[0].name}`
+            : `Heuristic score ${heuristicScore.score}/100 (${heuristicScore.verdict})`;
       notifyThreat(fileName, reason);
       const dest = quarantine(filePath, reason);
       addActivityEntry('ALERT', 'Protection', `Auto-Quarantined: ${fileName}`, reason);

@@ -25,6 +25,9 @@ const { mapToMitre } = require('../utils/mitreMapping');
 const { decodeStrings } = require('../utils/stringDecoder');
 const { analyzeScript } = require('../utils/scriptDeobfuscator');
 const { parsePE } = require('../utils/peParser');
+const { runRules } = require('../utils/yaraEngine');
+const { getRulesText } = require('../store/yaraStore');
+const { isZip, scanArchive } = require('../utils/archiveScanner');
 const { recordScan: recordIntelScan } = require('../utils/threatIntel');
 const { broadcast } = require('../utils/wsBroadcaster');
 const { addActivityEntry } = require('../store/activityLog');
@@ -282,13 +285,20 @@ function createLocalHeuristicResult(file, fileHash) {
     injectionResult,
   });
 
-  // Boost score cu IOC + script + decoded
+  // YARA rule matching — runs across entire buffer
+  const yaraResult    = runRules(file.buffer, getRulesText());
+  const yaraCritical  = yaraResult.matched.filter((m) => m.severity === 'critical');
+  const yaraWarning   = yaraResult.matched.filter((m) => m.severity === 'warning');
+  const yaraScore     = Math.min(yaraCritical.length * 40 + yaraWarning.length * 15, 60);
+
+  // Boost score cu IOC + script + decoded + YARA
   heuristicScore.score = Math.min(
     100,
     heuristicScore.score
     + (iocs.suspicionScore || 0)
     + (stringDecoded.riskContribution || 0)
-    + (scriptResult.riskContribution || 0),
+    + (scriptResult.riskContribution || 0)
+    + yaraScore,
   );
   if (heuristicScore.score >= 70) heuristicScore.verdict = 'HIGH_RISK';
   else if (heuristicScore.score >= 40) heuristicScore.verdict = 'MEDIUM_RISK';
@@ -312,9 +322,34 @@ function createLocalHeuristicResult(file, fileHash) {
     stringDecoded: stringDecoded.findings,
     scriptResult,
     peResult,
+    yaraResult,
     heuristicScore,
     mitreTechniques,
   };
+
+  // YARA critical match → immediate INFECTED verdict
+  if (yaraCritical.length > 0) {
+    const ruleNames = yaraCritical.map((m) => m.name).join(', ');
+    return {
+      detected: true,
+      signature: `YARA: ${ruleNames}`,
+      hexMatches: hexResult.matches,
+      deepAnalysis,
+      provider: createProviderResult({
+        id: 'local-heuristic',
+        name: 'Local Heuristic',
+        verdict: 'INFECTED',
+        message: `YARA rule match: ${ruleNames}. Matched strings: ${yaraCritical.flatMap((m) => m.matchedStrings).join(', ')}.`,
+        metadata: {
+          sha256: fileHash,
+          signature: `YARA: ${ruleNames}`,
+          detectionMethod: 'yara-critical',
+          yaraMatches: yaraCritical,
+          heuristicScore: heuristicScore.score,
+        },
+      }),
+    };
+  }
 
   if (hexResult.detected && criticalHex.length > 0) {
     const sigSummary = buildSignatureSummary(hexResult.matches);
@@ -797,10 +832,33 @@ function buildResultSummary(localHeuristic, malwareBazaar, hybridSignals) {
   };
 }
 
+async function scanFileBuffer(buffer, filename, options = {}) {
+  const fakeFile = { buffer, originalname: filename, size: buffer.length };
+  return scanFile(fakeFile, options);
+}
+
 async function scanFile(file, options = {}) {
   const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
   const providerSelection = options.providers || new Set();
   const publicSubmission = Boolean(options.publicSubmission);
+
+  // Archive scanning — extract and recursively scan ZIP entries
+  let archiveResults = null;
+  if (isZip(file.buffer)) {
+    try {
+      const entries = await scanArchive(file.buffer, file.originalname, (buf, name) =>
+        scanFileBuffer(buf, name, { providers: new Set(['local-heuristic']) }),
+      );
+      if (entries.length > 0) {
+        archiveResults = {
+          entryCount: entries.length,
+          infected: entries.filter((e) => e.status === 'INFECTED'),
+          review: entries.filter((e) => e.status === 'REVIEW'),
+          entries,
+        };
+      }
+    } catch { /* non-fatal */ }
+  }
 
   const localHeuristic = createLocalHeuristicResult(file, fileHash);
   const malwareBazaar = providerSelection.has('malwarebazaar')
@@ -809,6 +867,16 @@ async function scanFile(file, options = {}) {
 
   const hybridSignals = await collectHybridAnalysisSignals(file, fileHash, providerSelection, publicSubmission);
   const combined = buildResultSummary(localHeuristic, malwareBazaar, hybridSignals);
+
+  // Escalate verdict if archive contained threats
+  if (archiveResults?.infected?.length > 0 && combined.status === 'CLEAN') {
+    combined.status = 'INFECTED';
+    combined.signature = `Archive contains ${archiveResults.infected.length} infected file(s)`;
+    combined.message = `Threat found inside archive: ${archiveResults.infected.map((e) => e.filename).join(', ')}`;
+  } else if (archiveResults?.review?.length > 0 && combined.status === 'CLEAN') {
+    combined.status = 'REVIEW';
+    combined.message = `Suspicious entries found inside archive: ${archiveResults.review.map((e) => e.filename).join(', ')}`;
+  }
 
   const result = {
     filename: file.originalname,
@@ -848,6 +916,8 @@ async function scanFile(file, options = {}) {
       publicSubmission: hybridSignals.sandboxJob.publicSubmission,
       environmentId: hybridSignals.sandboxJob.environmentId,
     } : null,
+    archiveResults,
+    yaraMatches: localHeuristic.deepAnalysis?.yaraResult?.matched || [],
   };
 
   logScanResult(result);
