@@ -1,0 +1,12 @@
+# Claude Code session data
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs generate de pm2 / start scripts
+backend/server-*.log
+backend/server-*.err.log
