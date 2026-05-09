@@ -7,6 +7,7 @@ import {
   ThreatIntelPage,
   HoneypotsPage,
   RulesPage,
+  MemoryScanPage,
   LiveAlertsBanner,
   useLiveAlerts,
   EntropyHeatmap,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { id: 'signal', label: 'Signal', icon: 'broadcast' },
   { id: 'events', label: 'Events', icon: 'terminal' },
   { id: 'geoblocking', label: 'Geo-Block', icon: 'globe2' },
+  { id: 'memory', label: 'Memory Scan', icon: 'cpu' },
   { id: 'intel', label: 'U-Trust', icon: 'shield-check' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
@@ -2569,7 +2571,8 @@ export default function App() {
     lastResult: null,
   });
   const [eventsData, setEventsData] = useState({ events: [], loading: false, error: '' });
-  const [mitreData, setMitreData] = useState({ matrix: [], intel: null, loading: false });
+  const [mitreData, setMitreData] = useState({ matrix: [], intel: null, heatmap: null, loading: false });
+  const [memoryData, setMemoryData] = useState({ lastScan: null, loading: false, error: '' });
   const [intelData, setIntelData] = useState({ intel: null, loading: false });
   const [honeypotsData, setHoneypotsData] = useState({ canaries: [], events: [], loading: false });
   const [rulesData, setRulesData] = useState({ rules: '', loading: false });
@@ -2690,13 +2693,24 @@ export default function App() {
   const loadMitre = useCallback(async () => {
     setMitreData((current) => ({ ...current, loading: true }));
     try {
-      const [matrixRes, intelRes] = await Promise.all([
+      const [matrixRes, intelRes, heatmapRes] = await Promise.all([
         requestJson('/intel/mitre/matrix'),
         requestJson('/intel/intel/dashboard'),
+        requestJson('/intel/intel/mitre-heatmap').catch(() => null),
       ]);
-      setMitreData({ matrix: matrixRes?.tactics || [], intel: intelRes?.intel || null, loading: false });
+      setMitreData({ matrix: matrixRes?.tactics || [], intel: intelRes?.intel || null, heatmap: heatmapRes?.heatmap || null, loading: false });
     } catch {
       setMitreData((c) => ({ ...c, loading: false }));
+    }
+  }, []);
+
+  const handleMemoryScan = useCallback(async () => {
+    setMemoryData((c) => ({ ...c, loading: true, error: '' }));
+    try {
+      const payload = await requestJson('/memory/scan');
+      setMemoryData({ lastScan: payload, loading: false, error: '' });
+    } catch (err) {
+      setMemoryData((c) => ({ ...c, loading: false, error: err.message }));
     }
   }, []);
 
@@ -3230,7 +3244,8 @@ export default function App() {
         {connStatus === 'connecting' ? <div className="conn-banner conn-banner--info">Connecting to backend...</div> : null}
         <LiveAlertsBanner alerts={liveAlerts} />
         {activePage === 'dashboard' ? <Dashboard data={serverData} onNavigate={setActivePage} onRefresh={fetchDashboard} /> : null}
-        {activePage === 'mitre' ? <MitrePage matrix={mitreData.matrix} intel={mitreData.intel} loading={mitreData.loading} onRefresh={loadMitre} /> : null}
+        {activePage === 'mitre' ? <MitrePage matrix={mitreData.matrix} intel={mitreData.intel} heatmap={mitreData.heatmap} loading={mitreData.loading} onRefresh={loadMitre} /> : null}
+        {activePage === 'memory' ? <MemoryScanPage data={memoryData} loading={memoryData.loading} onScan={handleMemoryScan} /> : null}
         {activePage === 'intel' ? <ThreatIntelPage intel={intelData.intel} loading={intelData.loading} onRefresh={loadIntel} onReset={handleResetIntel} /> : null}
         {activePage === 'honeypots' ? <HoneypotsPage data={honeypotsData} loading={honeypotsData.loading} onRefresh={loadHoneypots} onPlant={handlePlantHoneypots} onCheck={handleCheckHoneypots} onRemove={handleRemoveAllHoneypots} /> : null}
         {activePage === 'rules' ? <RulesPage rulesText={rulesData.rules} onSave={handleSaveRules} onTest={handleTestRules} /> : null}

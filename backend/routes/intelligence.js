@@ -12,7 +12,7 @@ const verifyToken = require('../middleware/verifyToken');
 const { requireRole } = require('../middleware/requireRole');
 
 const { getMitreMatrix, mapToMitre } = require('../utils/mitreMapping');
-const { getIntelDashboard, resetIntel } = require('../utils/threatIntel');
+const { getIntelDashboard, resetIntel, getMitreHeatmap } = require('../utils/threatIntel');
 const { plantCanaries, listCanaries, listEvents, removeAllCanaries, checkCanaries } = require('../utils/honeypot');
 const { getBaselineSummary, recordSample, resetBaseline } = require('../utils/behavioralBaseline');
 const { getAlerts: getRansomAlerts, getCurrentWindow } = require('../utils/ransomwareCanary');
@@ -49,6 +49,10 @@ router.get('/intel/dashboard', (_req, res) => {
 router.post('/intel/reset', requireRole('admin'), (_req, res) => {
   resetIntel();
   res.json({ success: true, message: 'Threat intel data reset.' });
+});
+
+router.get('/intel/mitre-heatmap', (_req, res) => {
+  res.json({ success: true, heatmap: getMitreHeatmap() });
 });
 
 // ─── Honeypots ────────────────────────────────────────────────────────────

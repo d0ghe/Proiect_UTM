@@ -70,7 +70,21 @@ function recordScan(scanResult) {
   }
   for (const d of scanResult.iocs?.domains || []) bumpCounter(intel.topDomains, d);
   for (const ip of scanResult.iocs?.ips || []) bumpCounter(intel.topIPs, ip);
-  for (const tech of scanResult.mitreTechniques || []) bumpCounter(intel.topMitreTechniques, tech.id);
+  for (const tech of scanResult.mitreTechniques || []) {
+    bumpCounter(intel.topMitreTechniques, tech.id);
+    // per-day tracking for heat-map (keep last 30 days)
+    if (!intel.mitreByDay) intel.mitreByDay = {};
+    if (!intel.mitreByDay[today]) intel.mitreByDay[today] = {};
+    bumpCounter(intel.mitreByDay[today], tech.id);
+  }
+
+  // Trim mitreByDay to last 30 days
+  if (intel.mitreByDay) {
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    for (const d of Object.keys(intel.mitreByDay)) {
+      if (d < cutoff) delete intel.mitreByDay[d];
+    }
+  }
 
   saveIntel(intel);
 }
@@ -102,6 +116,34 @@ function getIntelDashboard() {
     topMitreTechniques: topN(intel.topMitreTechniques, 10),
     infectedTimeline: last7Days,
   };
+}
+
+function getMitreHeatmap() {
+  const intel = loadIntel();
+  const { getMitreMatrix, MITRE_TECHNIQUES } = require('./mitreMapping');
+  const matrix = getMitreMatrix();
+  const totals = intel.topMitreTechniques || {};
+  const byDay  = intel.mitreByDay || {};
+
+  // Build last-30-days array
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    days.push(new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
+  }
+
+  // Enrich matrix with hit counts
+  const enriched = matrix.map((tactic) => ({
+    ...tactic,
+    techniques: tactic.techniques.map((tech) => ({
+      ...tech,
+      totalHits: totals[tech.id] || 0,
+      dailyHits: days.map((d) => ({ date: d, count: (byDay[d]?.[tech.id] || 0) })),
+    })),
+  }));
+
+  const maxHits = Math.max(1, ...Object.values(totals));
+
+  return { tactics: enriched, days, maxHits };
 }
 
 function resetIntel() {

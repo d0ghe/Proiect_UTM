@@ -66,42 +66,212 @@ export function EntropyHeatmap({ blocks, height = 60 }) {
   );
 }
 
+// ─── MITRE ATT&CK Heat-map ──────────────────────────────────────────────────
+function hitColor(hits, maxHits) {
+  if (!hits || hits === 0) return { bg: '#1a1a1a', border: '#2a2a2a', text: '#555' };
+  const ratio = Math.min(1, hits / Math.max(1, maxHits));
+  if (ratio < 0.25)  return { bg: 'rgba(255,149,0,0.18)',  border: 'rgba(255,149,0,0.5)',  text: '#ff9500' };
+  if (ratio < 0.60)  return { bg: 'rgba(255,69,58,0.25)',  border: 'rgba(255,69,58,0.6)',  text: '#ff453a' };
+  return               { bg: 'rgba(255,69,58,0.50)',  border: '#ff453a',               text: '#fff' };
+}
+
 // ─── MITRE ATT&CK Matrix Page ───────────────────────────────────────────────
-export function MitrePage({ matrix, intel, loading, onRefresh }) {
-  const detectedTechs = new Set((intel?.topMitreTechniques || []).map((t) => t.key));
+export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
+  const [view, setView] = useState('heatmap'); // 'heatmap' | 'matrix'
+
+  // Use enriched heatmap tactics if available, otherwise fall back to basic matrix
+  const tactics    = heatmap?.tactics?.length ? heatmap.tactics : (matrix || []).map((t) => ({
+    ...t,
+    techniques: t.techniques.map((tech) => ({ ...tech, totalHits: 0, dailyHits: [] })),
+  }));
+  const maxHits    = heatmap?.maxHits || 1;
+  const totalHits  = Object.values(intel?.topMitreTechniques?.reduce?.((a, t) => { a[t.key] = t.count; return a; }, {}) || {}).reduce((s, v) => s + v, 0);
+  const activeTech = tactics.flatMap((t) => t.techniques).filter((t) => (t.totalHits || 0) > 0).length;
 
   return (
     <div className="page-content">
       <div className="page-header">
         <div>
           <p className="page-breadcrumb">Containment Atlas / MITRE ATT&CK</p>
-          <h1 className="page-title">ATT&CK Coverage Matrix</h1>
-          <p className="page-subtitle">Tehnici MITRE detectate live de motorul euristic, mapate la tactici Enterprise.</p>
+          <h1 className="page-title">ATT&CK Navigator Heat-map</h1>
+          <p className="page-subtitle">Tehnici detectate în ultimele 30 de zile, colorate după frecvență — stil ATT&CK Navigator.</p>
         </div>
-        <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button className={`control-btn${view === 'heatmap' ? '' : ' control-btn--ghost'}`} onClick={() => setView('heatmap')} type="button">Heat-map</button>
+          <button className={`control-btn${view === 'matrix' ? '' : ' control-btn--ghost'}`} onClick={() => setView('matrix')} type="button">Matrix</button>
+          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
+        </div>
       </div>
 
-      {loading ? <div className="empty-state">Loading MITRE matrix...</div> : null}
-
-      <div className="mitre-matrix">
-        {(matrix || []).map((tactic) => (
-          <div className="mitre-tactic" key={tactic.id}>
-            <h4 className="mitre-tactic__title">{tactic.name}</h4>
-            <p className="mitre-tactic__id">{tactic.id}</p>
-            <div className="mitre-tactic__list">
-              {tactic.techniques.map((tech) => {
-                const isHit = detectedTechs.has(tech.id);
-                return (
-                  <div key={tech.id} className={`mitre-technique ${isHit ? 'mitre-technique--hit' : ''}`} title={tech.name}>
-                    <strong>{tech.id}</strong>
-                    <span>{tech.name}</span>
-                  </div>
-                );
-              })}
-            </div>
+      {/* Summary row */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+        {[
+          { label: 'Techniques Triggered', value: activeTech, color: '#ff453a' },
+          { label: 'Total Detections', value: totalHits || Object.values(intel?.topMitreTechniques || []).reduce((s, t) => s + t.count, 0), color: '#f5a623' },
+          { label: 'Tactics Covered', value: tactics.filter((t) => t.techniques.some((te) => te.totalHits > 0)).length, color: '#34c759' },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ flex: '1 1 160px', padding: '0.85rem 1.1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
+            <div style={{ fontSize: '0.75rem', color: '#636366', marginBottom: '0.3rem' }}>{label}</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color }}>{value}</div>
           </div>
         ))}
+        {/* Legend */}
+        <div style={{ flex: '1 1 220px', padding: '0.85rem 1.1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
+          <div style={{ fontSize: '0.75rem', color: '#636366', marginBottom: '0.5rem' }}>Intensity Legend</div>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.72rem' }}>
+            {[['No hits', '#1a1a1a', '#2a2a2a'], ['Low', 'rgba(255,149,0,0.18)', 'rgba(255,149,0,0.5)'], ['Medium', 'rgba(255,69,58,0.25)', 'rgba(255,69,58,0.6)'], ['High', 'rgba(255,69,58,0.5)', '#ff453a']].map(([lbl, bg, border]) => (
+              <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <div style={{ width: 14, height: 14, borderRadius: 3, background: bg, border: `1px solid ${border}` }} />
+                <span style={{ color: '#888' }}>{lbl}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {loading ? <div className="empty-state">Loading MITRE data...</div> : null}
+
+      {view === 'heatmap' ? (
+        /* Heat-map view — all tactics side by side */
+        <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+          {tactics.map((tactic) => (
+            <div key={tactic.id} style={{ minWidth: 140, flex: '1 1 140px' }}>
+              {/* Tactic header */}
+              <div style={{ padding: '0.5rem 0.6rem', background: '#1e1e1e', borderRadius: '6px 6px 0 0', borderBottom: '2px solid #ff453a', marginBottom: 2 }}>
+                <div style={{ fontSize: '0.65rem', color: '#ff453a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tactic.id}</div>
+                <div style={{ fontSize: '0.75rem', color: '#e8e8e8', fontWeight: 600, lineHeight: 1.3 }}>{tactic.name}</div>
+              </div>
+              {/* Technique cells */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {tactic.techniques.map((tech) => {
+                  const hits = tech.totalHits || 0;
+                  const { bg, border, text } = hitColor(hits, maxHits);
+                  return (
+                    <div
+                      key={tech.id}
+                      title={`${tech.id}: ${tech.name}\nDetections: ${hits}`}
+                      style={{
+                        padding: '0.35rem 0.5rem', borderRadius: 4,
+                        background: bg, border: `1px solid ${border}`,
+                        cursor: 'default', transition: 'all 0.15s',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.65rem', color: text, fontWeight: 700 }}>{tech.id}</div>
+                      <div style={{ fontSize: '0.62rem', color: hits > 0 ? '#ccc' : '#444', lineHeight: 1.2, marginTop: 1 }}>{tech.name}</div>
+                      {hits > 0 && <div style={{ fontSize: '0.6rem', color: text, fontWeight: 600, marginTop: 2 }}>{hits}×</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Classic matrix view */
+        <div className="mitre-matrix">
+          {tactics.map((tactic) => (
+            <div className="mitre-tactic" key={tactic.id}>
+              <h4 className="mitre-tactic__title">{tactic.name}</h4>
+              <p className="mitre-tactic__id">{tactic.id}</p>
+              <div className="mitre-tactic__list">
+                {tactic.techniques.map((tech) => (
+                  <div key={tech.id} className={`mitre-technique ${tech.totalHits > 0 ? 'mitre-technique--hit' : ''}`} title={`${tech.name} — ${tech.totalHits || 0} hit(s)`}>
+                    <strong>{tech.id}</strong>
+                    <span>{tech.name}</span>
+                    {tech.totalHits > 0 && <small style={{ color: '#ff453a', fontWeight: 700 }}>{tech.totalHits}×</small>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Memory Scan Page ────────────────────────────────────────────────────────
+export function MemoryScanPage({ data, loading, onScan }) {
+  const result  = data?.lastScan;
+  const summary = result?.summary;
+
+  const threatColor = (t) => t === 'CRITICAL' ? '#ff453a' : t === 'SUSPICIOUS' ? '#f5a623' : '#34c759';
+
+  return (
+    <div className="page-content">
+      <div className="page-header">
+        <div>
+          <p className="page-breadcrumb">Containment Atlas / Memory</p>
+          <h1 className="page-title">Live Process Memory Scanner</h1>
+          <p className="page-subtitle">Analizează toate procesele active: căi suspecte, obfuscare în argumente, masquerade, parent-child chains anormale.</p>
+        </div>
+        <button className="control-btn" onClick={onScan} disabled={loading} type="button" style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}>
+          {loading ? 'Scanning…' : 'Scan Now'}
+        </button>
+      </div>
+
+      {loading && (
+        <div style={{ padding: '2rem', textAlign: 'center', color: '#636366', background: '#141414', borderRadius: 10, marginBottom: '1.25rem', border: '1px solid #2a2a2a' }}>
+          Enumerating processes via WMI… This takes 10-20 seconds.
+        </div>
+      )}
+
+      {summary && !loading && (
+        <>
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+            {[
+              { label: 'Total Processes', value: summary.total, color: '#e8e8e8' },
+              { label: 'Critical', value: summary.critical, color: '#ff453a' },
+              { label: 'Suspicious', value: summary.suspicious, color: '#f5a623' },
+              { label: 'Clean', value: summary.clean, color: '#34c759' },
+              { label: 'Scan Time', value: `${summary.scanTimeMs}ms`, color: '#636366' },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ flex: '1 1 120px', padding: '0.85rem 1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: 10 }}>
+                <div style={{ fontSize: '0.72rem', color: '#636366', marginBottom: '0.3rem' }}>{label}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {(result?.processes || []).filter((p) => p.threat !== 'CLEAN').map((proc) => (
+              <div key={proc.pid} style={{ padding: '0.9rem 1.1rem', background: '#141414', border: `1px solid ${threatColor(proc.threat)}22`, borderLeft: `3px solid ${threatColor(proc.threat)}`, borderRadius: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 4, background: `${threatColor(proc.threat)}22`, color: threatColor(proc.threat), border: `1px solid ${threatColor(proc.threat)}` }}>
+                    {proc.threat}
+                  </span>
+                  <strong style={{ fontSize: '0.9rem' }}>{proc.name}</strong>
+                  <span style={{ fontSize: '0.75rem', color: '#636366' }}>PID {proc.pid}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#636366', marginLeft: 'auto' }}>Score: {proc.score}</span>
+                </div>
+                {proc.path && <div style={{ fontSize: '0.75rem', color: '#888', fontFamily: 'monospace', marginBottom: '0.4rem' }}>{proc.path}</div>}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                  {proc.findings.map((f, i) => (
+                    <span key={i} style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem', borderRadius: 4, background: f.severity === 'critical' ? 'rgba(255,69,58,0.15)' : 'rgba(245,166,35,0.15)', color: f.severity === 'critical' ? '#ff453a' : '#f5a623', border: `1px solid ${f.severity === 'critical' ? '#ff453a' : '#f5a623'}44` }} title={f.detail}>
+                      {f.type}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {summary.critical === 0 && summary.suspicious === 0 && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#34c759', background: '#141414', borderRadius: 10, border: '1px solid #34c75922' }}>
+                ✓ No suspicious processes detected across {summary.total} running processes.
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: '#444', textAlign: 'right' }}>
+            Scanned at {new Date(summary.scannedAt).toLocaleString()}
+          </div>
+        </>
+      )}
+
+      {!summary && !loading && (
+        <div style={{ padding: '3rem', textAlign: 'center', color: '#636366', background: '#141414', borderRadius: 10, border: '1px solid #2a2a2a' }}>
+          Click "Scan Now" to analyze all running processes for malicious indicators.
+        </div>
+      )}
     </div>
   );
 }
