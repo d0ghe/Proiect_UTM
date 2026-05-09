@@ -31,12 +31,10 @@ const NAV_ITEMS = [
   { id: 'filtering', label: 'Filtering', icon: 'funnel' },
   { id: 'protection', label: 'Protection', icon: 'activity' },
   { id: 'mitre', label: 'MITRE ATT&CK', icon: 'crosshair' },
-  { id: 'intel', label: 'Threat Intel', icon: 'globe' },
-  { id: 'honeypots', label: 'Honeypots', icon: 'bug' },
-  { id: 'rules', label: 'Custom Rules', icon: 'code-square' },
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
   { id: 'signal', label: 'Signal', icon: 'broadcast' },
   { id: 'events', label: 'Events', icon: 'terminal' },
+  { id: 'intel', label: 'U-Trust', icon: 'shield-check' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
 
@@ -743,37 +741,61 @@ function Dashboard({ data, onNavigate, onRefresh }) {
   );
 }
 
+function OsBanner({ msg, ok }) {
+  if (!msg) return null;
+  return (
+    <p style={{
+      background:   ok ? 'rgba(52,199,89,0.08)'  : 'rgba(255,69,58,0.08)',
+      border:       `1px solid ${ok ? 'rgba(52,199,89,0.35)' : 'rgba(255,69,58,0.35)'}`,
+      borderRadius: '6px', padding: '0.5rem 0.75rem',
+      fontSize:     '0.8rem', color: ok ? '#34c759' : '#ff453a', margin: 0,
+    }}>
+      {ok ? '✓ ' : '⚠ '}{msg}
+    </p>
+  );
+}
+
 function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rules, summary }) {
-  const [form, setForm] = useState({
-    action: 'BLOCK',
-    protocol: 'TCP',
-    port: '443',
-    ip: 'Any',
-    status: 'Active',
-    desc: '',
-  });
-  const [submitError, setSubmitError] = useState('');
+  const [form, setForm] = useState({ action: 'BLOCK', protocol: 'TCP', port: '', ip: 'Any', status: 'Active', desc: '' });
+  const [submitError, setSubmitError]   = useState('');
+  const [osStatus,    setOsStatus]      = useState(null);   // { ok, msg }
+  const [deletingId,  setDeletingId]    = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Load rules as soon as this component mounts (handles server-restart case)
+  useEffect(() => { onRefresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit(event) {
     event.preventDefault();
     setSubmitError('');
-    setIsSubmitting(true);
+    setOsStatus(null);
 
+    const portNum = Number(form.port);
+    if (!form.port || !Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
+      setSubmitError('Introdu un port valid între 1 și 65535.');
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      await onAddRule({
-        ...form,
-        port: Number(form.port),
-      });
-      setForm((current) => ({
-        ...current,
-        port: '443',
-        desc: '',
-      }));
-    } catch (submitIssue) {
-      setSubmitError(submitIssue.message);
+      const result = await onAddRule({ ...form, port: portNum });
+      if (result?.osFirewall) {
+        setOsStatus({ ok: result.osFirewall.success === true, msg: result.osFirewall.message || '' });
+      }
+      setForm((c) => ({ ...c, port: '', desc: '' }));
+    } catch (e) {
+      setSubmitError(e.message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleDelete(ruleId) {
+    setDeletingId(ruleId);
+    try {
+      await onDeleteRule(ruleId);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -782,34 +804,34 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
       <PageHeader
         breadcrumb="Containment Atlas / Firewall"
         title="Firewall Rules"
-        subtitle="Manage the ruleset that backs the backend firewall API."
+        subtitle="Definește reguli de blocare/permitere aplicate direct în Windows Firewall."
         action={(
-          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
-            Refresh Rules
-          </button>
+          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
         )}
       />
 
+
       <div className="panel-grid panel-grid--stats">
-        <StatCard accent="green" label="Rules Loaded" value={formatInteger(summary?.total)} />
-        <StatCard accent="blue" label="Rules Active" value={formatInteger(summary?.active)} />
-        <StatCard accent="red" label="Block Rules" value={formatInteger(summary?.blockedRules)} />
-        <StatCard accent="neutral" label="Allow Rules" value={formatInteger(summary?.allowedRules)} />
+        <StatCard accent="neutral" label="Total Rules"  value={formatInteger(summary?.total)} />
+        <StatCard accent="blue"    label="Active"       value={formatInteger(summary?.active)} />
+        <StatCard accent="red"     label="Block"        value={formatInteger(summary?.blockedRules)} />
+        <StatCard accent="green"   label="Allow"        value={formatInteger(summary?.allowedRules)} />
       </div>
 
       <div className="panel-grid panel-grid--split">
+        {/* ── Rule Composer ── */}
         <section className="panel-card">
           <div className="panel-card__header">
             <div>
               <p className="panel-kicker">Rule Composer</p>
-              <h3>Create Firewall Rule</h3>
+              <h3>Add Firewall Rule</h3>
             </div>
           </div>
 
           <form className="field-grid" onSubmit={handleSubmit}>
             <label className="field-group">
               <span className="field-label">Action</span>
-              <select className="field-input" value={form.action} onChange={(event) => setForm({ ...form, action: event.target.value })}>
+              <select className="field-input" value={form.action} onChange={(e) => setForm({ ...form, action: e.target.value })}>
                 <option value="BLOCK">Block</option>
                 <option value="ALLOW">Allow</option>
               </select>
@@ -817,7 +839,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
 
             <label className="field-group">
               <span className="field-label">Protocol</span>
-              <select className="field-input" value={form.protocol} onChange={(event) => setForm({ ...form, protocol: event.target.value })}>
+              <select className="field-input" value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value })}>
                 <option value="TCP">TCP</option>
                 <option value="UDP">UDP</option>
                 <option value="ICMP">ICMP</option>
@@ -825,40 +847,53 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
             </label>
 
             <label className="field-group">
-              <span className="field-label">Port</span>
-              <input className="field-input" min="1" step="1" type="number" value={form.port} onChange={(event) => setForm({ ...form, port: event.target.value })} />
+              <span className="field-label">Port <span style={{ fontWeight: 400, opacity: 0.5 }}>(1–65535)</span></span>
+              <input
+                autoComplete="off"
+                className="field-input"
+                inputMode="numeric"
+                placeholder="ex: 80, 443, 8080"
+                type="text"
+                value={form.port}
+                onChange={(e) => setForm({ ...form, port: e.target.value.replace(/\D/g, '') })}
+              />
             </label>
 
             <label className="field-group">
-              <span className="field-label">IP Scope</span>
-              <input className="field-input" type="text" value={form.ip} onChange={(event) => setForm({ ...form, ip: event.target.value })} />
+              <span className="field-label">IP / Scope</span>
+              <input className="field-input" placeholder="Any" type="text" value={form.ip}
+                onChange={(e) => setForm({ ...form, ip: e.target.value })} />
             </label>
 
             <label className="field-group field-group--wide">
               <span className="field-label">Description</span>
-              <textarea className="field-input field-input--textarea" rows="4" value={form.desc} onChange={(event) => setForm({ ...form, desc: event.target.value })} />
+              <textarea className="field-input field-input--textarea" rows="2" value={form.desc}
+                onChange={(e) => setForm({ ...form, desc: e.target.value })} />
             </label>
 
             {(submitError || error) ? <p className="form-message form-message--error">{submitError || error}</p> : null}
+            <OsBanner msg={osStatus?.msg} ok={osStatus?.ok} />
 
             <div className="form-actions">
-              <button className="control-btn control-btn--primary" disabled={isSubmitting} type="submit">
-                {isSubmitting ? 'Saving...' : 'Add Rule'}
+              <button className="control-btn control-btn--primary" disabled={isSubmitting || !form.port} type="submit">
+                {isSubmitting ? 'Se aplică…' : 'Add Rule'}
               </button>
             </div>
           </form>
         </section>
 
+        {/* ── Current Entries ── */}
         <section className="panel-card">
           <div className="panel-card__header">
             <div>
               <p className="panel-kicker">Live Ruleset</p>
               <h3>Current Entries</h3>
             </div>
+            <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>{rules.length} rule{rules.length !== 1 ? 's' : ''}</span>
           </div>
 
-          {loading && rules.length === 0 ? <EmptyState text="Loading firewall rules..." /> : null}
-          {!loading && rules.length === 0 ? <EmptyState text="No firewall rules are configured yet." /> : null}
+          {loading && rules.length === 0 ? <EmptyState text="Se încarcă regulile…" /> : null}
+          {!loading && rules.length === 0 ? <EmptyState text="Nicio regulă configurată." /> : null}
 
           {rules.length > 0 ? (
             <div className="table-wrap">
@@ -866,7 +901,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
                 <thead>
                   <tr>
                     <th>Action</th>
-                    <th>Protocol</th>
+                    <th>Proto</th>
                     <th>Port</th>
                     <th>Scope</th>
                     <th>Status</th>
@@ -877,15 +912,28 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
                 <tbody>
                   {rules.map((rule) => (
                     <tr key={rule.id}>
-                      <td>{rule.action}</td>
+                      <td>
+                        <span style={{
+                          fontWeight: 600,
+                          color: rule.action === 'BLOCK' ? '#ff453a' : '#34c759',
+                          fontSize: '0.8rem',
+                        }}>
+                          {rule.action}
+                        </span>
+                      </td>
                       <td>{rule.protocol}</td>
-                      <td>{rule.port}</td>
+                      <td style={{ fontWeight: 600 }}>{rule.port}</td>
                       <td>{rule.ip}</td>
                       <td><StatusBadge value={rule.status} /></td>
-                      <td>{rule.desc}</td>
+                      <td style={{ opacity: 0.65, fontSize: '0.8rem' }}>{rule.desc || '—'}</td>
                       <td className="table-actions">
-                        <button className="control-btn control-btn--danger" onClick={() => onDeleteRule(rule.id)} type="button">
-                          Delete
+                        <button
+                          className="control-btn control-btn--danger"
+                          disabled={deletingId === rule.id}
+                          onClick={() => handleDelete(rule.id)}
+                          type="button"
+                        >
+                          {deletingId === rule.id ? '…' : 'Delete'}
                         </button>
                       </td>
                     </tr>
@@ -2063,8 +2111,20 @@ function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset })
             </div>
 
             <div className="detail-grid" style={{ marginTop: '1rem' }}>
-              <DataPair label="LoRa Activat la" value={formatDateTime(signal.loraActivatedAt) !== '-' ? formatDateTime(signal.loraActivatedAt) : 'N/A'} />
-              <DataPair label="LoRa Dezactivat la" value={formatDateTime(signal.loraDeactivatedAt) !== '-' ? formatDateTime(signal.loraDeactivatedAt) : 'N/A'} />
+              <DataPair
+                label="Status LoRa"
+                value={mode?.fallbackActive ? 'Activ' : signal.loraDeactivatedAt ? 'Dezactivat' : 'Inactiv'}
+              />
+              <DataPair
+                label="Ultima sesiune LoRa"
+                value={
+                  signal.loraActivatedAt
+                    ? formatDateTime(signal.loraActivatedAt)
+                    : signal.loraDeactivatedAt
+                    ? formatDateTime(signal.loraDeactivatedAt)
+                    : 'Niciodată activat'
+                }
+              />
             </div>
           </section>
         </div>

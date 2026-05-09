@@ -1,8 +1,28 @@
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { exec, spawnSync } = require('child_process');
 
 const { CATEGORY_IDS, setBlockedDomains } = require('../store/contentFilterStore');
+
+// Blochează QUIC (HTTP/3 pe UDP 443) ca Facebook/TikTok să nu ocolească proxy-ul TCP
+// Funcționează doar când backend-ul rulează ca Administrator
+const QUIC_RULE = 'UTM_BLOCK_QUIC_UDP443';
+function applyQuicBlock() {
+  exec(
+    `powershell -NonInteractive -ExecutionPolicy Bypass -Command "` +
+    `Remove-NetFirewallRule -DisplayName '${QUIC_RULE}' -ErrorAction SilentlyContinue;` +
+    `New-NetFirewallRule -DisplayName '${QUIC_RULE}' -Direction Outbound ` +
+    `-Protocol UDP -RemotePort 443 -Action Block -Enabled True -ErrorAction Stop"`,
+    (err) => { if (!err) console.log('[+] QUIC blocat (UDP 443 outbound) — social/gambling vor fi blocate complet.'); }
+  );
+}
+function removeQuicBlock() {
+  exec(
+    `powershell -NonInteractive -ExecutionPolicy Bypass -Command "` +
+    `Remove-NetFirewallRule -DisplayName '${QUIC_RULE}' -ErrorAction SilentlyContinue"`,
+    () => {}
+  );
+}
 
 const CACHE_DIR = path.join(__dirname, '../store/content-filter-cache');
 const HOSTS_SECTION_START = '# === Containment Atlas Content Filter Start ===';
@@ -17,43 +37,43 @@ const CATEGORY_LIBRARY = {
   },
   ads: {
     id: 'ads',
-    label: 'Ads',
-    description: 'Blocks popup ads and ad-heavy redirect domains.',
-    sourceName: 'HaGeZi Pop-Up Ads',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/popupads-onlydomains.txt',
+    label: 'Ads & Trackers',
+    description: 'Blocks ad networks, trackers and analytics domains (Google Ads, Yahoo Ads, AppNexus etc.).',
+    sourceName: 'HaGeZi Pro Mini',
+    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.mini-onlydomains.txt',
   },
   malware: {
     id: 'malware',
-    label: 'Malware',
+    label: 'Malware & Phishing',
     description: 'Blocks malware, phishing, scam, and command-and-control domains.',
-    sourceName: 'HaGeZi TIF Mini',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif.mini-onlydomains.txt',
+    sourceName: 'HaGeZi TIF',
+    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif-onlydomains.txt',
   },
   gambling: {
     id: 'gambling',
     label: 'Gambling',
-    description: 'Blocks common gambling domains with a size-optimized list.',
-    sourceName: 'HaGeZi Gambling Mini',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.mini-onlydomains.txt',
+    description: 'Blocks gambling sites. Necesită admin (Run as Administrator) pentru blocare completă HTTPS.',
+    sourceName: 'HaGeZi Gambling',
+    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling-onlydomains.txt',
   },
   social: {
     id: 'social',
-    label: 'Social',
-    description: 'Blocks major social media domains.',
+    label: 'Social Media',
+    description: 'Blocks Facebook, TikTok, Instagram etc. Necesită admin pentru blocare completă (QUIC/HTTP3).',
     sourceName: 'HaGeZi Social',
     sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/social-onlydomains.txt',
   },
   piracy: {
     id: 'piracy',
     label: 'Piracy',
-    description: 'Blocks common piracy and illicit distribution domains.',
+    description: 'Blocks torrent sites and illicit streaming platforms.',
     sourceName: 'HaGeZi Anti Piracy',
     sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/anti.piracy-onlydomains.txt',
   },
   bypass: {
     id: 'bypass',
     label: 'DNS Bypass',
-    description: 'Blocks domains commonly used to bypass local DNS filtering.',
+    description: 'Blocks domains used to bypass DNS filtering (DoH providers, VPN, proxies).',
     sourceName: 'HaGeZi DoH/VPN/Proxy Bypass',
     sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/doh-vpn-proxy-bypass-onlydomains.txt',
   },
@@ -270,7 +290,15 @@ async function compilePolicy(policy, options = {}) {
   }, {});
   const domainMap = new Map();
 
-  const categoryResults = await Promise.all(enabledCategoryIds.map((categoryId) => loadCategoryDomains(categoryId, options)));
+  // Resilient: dacă o categorie pică la download, continuă cu celelalte
+  const categoryResults = (await Promise.allSettled(
+    enabledCategoryIds.map((categoryId) => loadCategoryDomains(categoryId, options))
+  )).map((outcome) => {
+    if (outcome.status === 'fulfilled') return outcome.value;
+    console.error('[!] Content filter category failed:', outcome.reason?.message);
+    return null;
+  }).filter(Boolean);
+
   categoryResults.forEach((result) => {
     categoryDomainCounts[result.categoryId] = result.domains.length;
     sourceStatus[result.categoryId] = {
@@ -425,7 +453,12 @@ async function applyPolicy(policy, options = {}) {
       : 'Blocare activă prin proxy (Chrome/Edge).';
   }
 
-  const applied = policy?.enabled && compiled.domains.length > 0;
+  const applied = hasContent;
+
+  // Blochează și QUIC (UDP 443) dacă sunt domenii active — previne ocolirea proxy-ului TCP
+  if (applied) applyQuicBlock();
+  else removeQuicBlock();
+
   return {
     ...compiled,
     applied,
@@ -437,8 +470,9 @@ async function applyPolicy(policy, options = {}) {
 }
 
 function removeManagedBlock() {
-  // Golește cache-ul proxy imediat
+  // Golește cache-ul proxy și elimină regula QUIC
   setBlockedDomains([]);
+  removeQuicBlock();
 
   const environment = inspectEnvironment();
   let dnsFlushMessage = 'Proxy cache cleared.';
@@ -533,6 +567,7 @@ module.exports = {
   CATEGORY_IDS,
   CATEGORY_LIBRARY,
   applyPolicy,
+  applyQuicBlock,
   buildOverview,
   checkDomainAgainstPolicy,
   compilePolicy,
@@ -540,6 +575,7 @@ module.exports = {
   initBlockedDomains,
   inspectEnvironment,
   removeManagedBlock,
+  removeQuicBlock,
   splitTextList,
   syncPolicy,
 };
