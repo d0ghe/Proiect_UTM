@@ -41,6 +41,7 @@ app.use('/api/content-filter', require('./routes/contentFilter'));
 app.use('/api/signal',         require('./routes/signal'));
 app.use('/api/intel',          require('./routes/intelligence'));
 app.use('/api/report',         require('./routes/report'));
+app.use('/api/geo-filter',     require('./routes/geoFilter'));
 
 const server = http.createServer(app);
 attachWebSocket(server);

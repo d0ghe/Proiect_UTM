@@ -34,6 +34,7 @@ const NAV_ITEMS = [
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
   { id: 'signal', label: 'Signal', icon: 'broadcast' },
   { id: 'events', label: 'Events', icon: 'terminal' },
+  { id: 'geoblocking', label: 'Geo-Block', icon: 'globe2' },
   { id: 'intel', label: 'U-Trust', icon: 'shield-check' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
@@ -2200,6 +2201,142 @@ function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset })
   );
 }
 
+const COUNTRY_LIST = [
+  { code: 'CN', name: 'China' }, { code: 'RU', name: 'Russia' }, { code: 'KP', name: 'North Korea' },
+  { code: 'IR', name: 'Iran' }, { code: 'BY', name: 'Belarus' }, { code: 'CU', name: 'Cuba' },
+  { code: 'SY', name: 'Syria' }, { code: 'SD', name: 'Sudan' }, { code: 'MM', name: 'Myanmar' },
+  { code: 'VN', name: 'Vietnam' }, { code: 'PK', name: 'Pakistan' }, { code: 'NG', name: 'Nigeria' },
+  { code: 'IN', name: 'India' }, { code: 'BR', name: 'Brazil' }, { code: 'UA', name: 'Ukraine' },
+  { code: 'TR', name: 'Turkey' }, { code: 'ID', name: 'Indonesia' }, { code: 'EG', name: 'Egypt' },
+  { code: 'TH', name: 'Thailand' }, { code: 'PH', name: 'Philippines' }, { code: 'BD', name: 'Bangladesh' },
+  { code: 'MX', name: 'Mexico' }, { code: 'VE', name: 'Venezuela' }, { code: 'IQ', name: 'Iraq' },
+  { code: 'AF', name: 'Afghanistan' }, { code: 'LY', name: 'Libya' }, { code: 'SO', name: 'Somalia' },
+  { code: 'YE', name: 'Yemen' }, { code: 'HK', name: 'Hong Kong' }, { code: 'TW', name: 'Taiwan' },
+  { code: 'US', name: 'United States' }, { code: 'GB', name: 'United Kingdom' }, { code: 'DE', name: 'Germany' },
+  { code: 'FR', name: 'France' }, { code: 'NL', name: 'Netherlands' }, { code: 'RO', name: 'Romania' },
+  { code: 'PL', name: 'Poland' }, { code: 'UA', name: 'Ukraine' }, { code: 'KZ', name: 'Kazakhstan' },
+  { code: 'UZ', name: 'Uzbekistan' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'GE', name: 'Georgia' },
+];
+
+const UNIQUE_COUNTRY_LIST = COUNTRY_LIST.filter((c, i, arr) => arr.findIndex((x) => x.code === c.code) === i);
+
+function countryFlag(code) {
+  return [...code.toUpperCase()].map((ch) => String.fromCodePoint(0x1F1E6 - 65 + ch.charCodeAt(0))).join('');
+}
+
+function GeoFilterPage({ data, onUpdate, onCheck, onRefresh }) {
+  const [search, setSearch]       = useState('');
+  const [checkHost, setCheckHost] = useState('');
+  const selected = new Set(data.blockedCountries || []);
+
+  const filtered = UNIQUE_COUNTRY_LIST.filter(
+    (c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  function toggleCountry(code) {
+    const next = new Set(selected);
+    if (next.has(code)) next.delete(code);
+    else next.add(code);
+    onUpdate({ blockedCountries: Array.from(next) });
+  }
+
+  function toggleEnabled() {
+    onUpdate({ enabled: !data.enabled });
+  }
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        breadcrumb="Containment Atlas / Geo-Block"
+        title="Geographic Blocking"
+        subtitle="Block all outbound traffic to IP ranges associated with specific countries. Works through the HTTP proxy for Chrome/Edge."
+        action={(
+          <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
+        )}
+      />
+
+      {data.error ? <p style={{ color: '#ff453a', marginBottom: '1rem' }}>{data.error}</p> : null}
+
+      {/* Enable toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Geo-Filter {data.enabled ? <span style={{ color: '#34c759' }}>Active</span> : <span style={{ color: '#636366' }}>Inactive</span>}</div>
+          <div style={{ fontSize: '0.8rem', color: '#636366', marginTop: '0.2rem' }}>{selected.size} {selected.size === 1 ? 'country' : 'countries'} selected</div>
+        </div>
+        <button
+          className={`control-btn${data.enabled ? '' : ' control-btn--ghost'}`}
+          disabled={data.saving}
+          onClick={toggleEnabled}
+          type="button"
+        >
+          {data.enabled ? 'Disable' : 'Enable'}
+        </button>
+      </div>
+
+      {/* Search */}
+      <input
+        className="filter-search-input"
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search country…"
+        style={{ width: '100%', marginBottom: '1rem', padding: '0.6rem 0.9rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', color: '#e8e8e8', fontSize: '0.9rem', outline: 'none' }}
+        type="text"
+        value={search}
+      />
+
+      {/* Country grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.6rem', marginBottom: '1.5rem' }}>
+        {filtered.map((c) => {
+          const active = selected.has(c.code);
+          return (
+            <button
+              key={c.code}
+              onClick={() => toggleCountry(c.code)}
+              disabled={data.saving}
+              type="button"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.6rem',
+                padding: '0.6rem 0.9rem', borderRadius: '8px', cursor: 'pointer',
+                background: active ? 'rgba(255,69,58,0.12)' : '#141414',
+                border: `1px solid ${active ? '#ff453a' : '#2a2a2a'}`,
+                color: active ? '#ff453a' : '#e8e8e8',
+                fontWeight: active ? 600 : 400, fontSize: '0.85rem',
+                textAlign: 'left', transition: 'all 0.15s',
+              }}
+            >
+              <span style={{ fontSize: '1.2rem' }}>{countryFlag(c.code)}</span>
+              <span>{c.name}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.5 }}>{c.code}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Check hostname */}
+      <div style={{ padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
+        <div style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Test Hostname</div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <input
+            onChange={(e) => setCheckHost(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && checkHost) onCheck(checkHost); }}
+            placeholder="e.g. baidu.com"
+            style={{ flex: 1, padding: '0.55rem 0.8rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '7px', color: '#e8e8e8', fontSize: '0.88rem', outline: 'none' }}
+            type="text"
+            value={checkHost}
+          />
+          <button className="control-btn control-btn--ghost" disabled={!checkHost} onClick={() => onCheck(checkHost)} type="button">
+            Check
+          </button>
+        </div>
+        {data.checkResult ? (
+          <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: data.checkResult.blocked ? '#ff453a' : '#34c759' }}>
+            <strong>{data.checkResult.hostname}</strong> → {data.checkResult.country || 'Unknown'} — {data.checkResult.blocked ? 'BLOCKED' : 'Allowed'}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [serverData, setServerData] = useState(null);
@@ -2261,6 +2398,7 @@ export default function App() {
     message: '',
     checkResult: null,
   });
+  const [geoFilterData, setGeoFilterData] = useState({ enabled: false, blockedCountries: [], loading: false, saving: false, error: '', checkResult: null });
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -2748,6 +2886,36 @@ export default function App() {
     }
   }, [fetchDashboard, loadEvents]);
 
+  const loadGeoFilter = useCallback(async () => {
+    setGeoFilterData((c) => ({ ...c, loading: true, error: '' }));
+    try {
+      const payload = await requestJson('/geo-filter');
+      setGeoFilterData((c) => ({ ...c, enabled: Boolean(payload?.enabled), blockedCountries: payload?.blockedCountries || [], loading: false }));
+    } catch (err) {
+      setGeoFilterData((c) => ({ ...c, loading: false, error: err.message }));
+    }
+  }, []);
+
+  const handleUpdateGeoFilter = useCallback(async (patch) => {
+    setGeoFilterData((c) => ({ ...c, saving: true, error: '' }));
+    try {
+      const payload = await requestJson('/geo-filter', { method: 'PATCH', body: JSON.stringify(patch) });
+      setGeoFilterData((c) => ({ ...c, enabled: Boolean(payload?.enabled), blockedCountries: payload?.blockedCountries || [], saving: false }));
+    } catch (err) {
+      setGeoFilterData((c) => ({ ...c, saving: false, error: err.message }));
+    }
+  }, []);
+
+  const handleCheckGeoHost = useCallback(async (hostname) => {
+    setGeoFilterData((c) => ({ ...c, checkResult: null }));
+    try {
+      const payload = await requestJson('/geo-filter/check', { method: 'POST', body: JSON.stringify({ hostname }) });
+      setGeoFilterData((c) => ({ ...c, checkResult: payload }));
+    } catch (err) {
+      setGeoFilterData((c) => ({ ...c, error: err.message }));
+    }
+  }, []);
+
   const handleCheckContentFilterDomain = useCallback(async (domain) => {
     setContentFilterData((current) => ({ ...current, checking: true, error: '', message: '' }));
     try {
@@ -2831,7 +2999,11 @@ export default function App() {
     if (activePage === 'signal') {
       loadSignal();
     }
-  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadProtection, loadSignal, loadTelemetry, loadMitre, loadIntel, loadHoneypots, loadRules]);
+
+    if (activePage === 'geoblocking') {
+      loadGeoFilter();
+    }
+  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadGeoFilter, loadProtection, loadSignal, loadTelemetry, loadMitre, loadIntel, loadHoneypots, loadRules]);
 
   return (
     <div className="control-app">
@@ -2916,6 +3088,9 @@ export default function App() {
           />
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
+        {activePage === 'geoblocking' ? (
+          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onCheck={handleCheckGeoHost} onRefresh={loadGeoFilter} />
+        ) : null}
         {activePage === 'controls' ? (
           <ControlsPage
             data={controlsData.controls}

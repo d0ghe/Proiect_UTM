@@ -42,6 +42,11 @@ function isDomainBlocked(hostname) {
   catch { return false; }
 }
 
+async function isGeoBlocked(hostname) {
+  try { return require('../utils/geoFilter').isGeoBlocked(hostname); }
+  catch { return { blocked: false }; }
+}
+
 /* ─── blocked response helpers ───────────────────────────────────────────── */
 
 const BLOCK_HTML = (reason, detail) => `<!DOCTYPE html>
@@ -90,7 +95,7 @@ function sendBlockSocket(socket, label, detail) {
 
 /* ─── proxy logic ────────────────────────────────────────────────────────── */
 
-function handleHttp(req, res) {
+async function handleHttp(req, res) {
   /* Plain HTTP requests: the browser sends the full URL as the path. */
   let targetUrl;
   try {
@@ -106,6 +111,12 @@ function handleHttp(req, res) {
   }
   if (isDomainBlocked(targetUrl.hostname)) {
     sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
+    return;
+  }
+
+  const geo = await isGeoBlocked(targetUrl.hostname);
+  if (geo.blocked) {
+    sendBlockHtml(res, `This destination is blocked by the Geo-Filter policy.`, `${targetUrl.hostname} — ${geo.country}`);
     return;
   }
 
@@ -130,7 +141,7 @@ function handleHttp(req, res) {
   req.pipe(upstream, { end: true });
 }
 
-function handleConnect(req, clientSocket, head) {
+async function handleConnect(req, clientSocket, head) {
   /* HTTPS CONNECT tunnelling */
   const parts = req.url.split(':');
   const host  = parts[0];
@@ -142,6 +153,12 @@ function handleConnect(req, clientSocket, head) {
   }
   if (isDomainBlocked(host)) {
     sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
+    return;
+  }
+
+  const geo = await isGeoBlocked(host);
+  if (geo.blocked) {
+    sendBlockSocket(clientSocket, `This destination is blocked by the Geo-Filter policy.`, `${host} — ${geo.country}`);
     return;
   }
 
