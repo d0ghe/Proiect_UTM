@@ -57,38 +57,102 @@ function getRecentAttacks(limit = 50) {
   return attackLog.slice(-limit).reverse();
 }
 
-async function resolveIp(hostname) {
-  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return hostname;
+// Domenii cunoscute per tara care folosesc CDN global (IP-ul nu e clasificat corect)
+const KNOWN_DOMAINS = {
+  CN: [
+    'baidu.com','qq.com','wechat.com','weixin.qq.com','weibo.com','sina.com','sina.com.cn',
+    'taobao.com','tmall.com','jd.com','alibaba.com','aliexpress.com','aliyun.com','1688.com',
+    'bilibili.com','youku.com','iqiyi.com','mgtv.com','sohu.com','163.com','126.com',
+    'douyin.com','tiktok.com','kuaishou.com','tencent.com','qq.com','netease.com',
+    'zhihu.com','douban.com','renren.com','xiaomi.com','huawei.com','oppo.com','vivo.com',
+  ],
+  RU: [
+    'vk.com','mail.ru','yandex.com','yandex.ru','yandex.net','ok.ru','rambler.ru',
+    'sberbank.ru','gazprom.ru','rt.com','ria.ru','tass.ru','interfax.ru',
+  ],
+  KP: ['kcna.kp','naenara.com.kp','rodong.rep.kp'],
+  IR: ['aparat.com','digikala.com','irna.ir','tasnimnews.com','farsnews.ir'],
+  BY: ['tut.by','onliner.by','belta.by'],
+  CU: ['cubadebate.cu','granma.cu'],
+};
+
+// TLD-uri de tara
+const TLD_MAP = { cn:'CN', ru:'RU', su:'RU', ir:'IR', kp:'KP', cu:'CU', by:'BY', sy:'SY' };
+
+function countryFromKnownDomains(hostname) {
+  const h = hostname.toLowerCase();
+  for (const [country, domains] of Object.entries(KNOWN_DOMAINS)) {
+    if (domains.some((d) => h === d || h.endsWith(`.${d}`))) return country;
+  }
+  return null;
+}
+
+function countryFromTld(hostname) {
+  const tld = hostname.split('.').pop().toLowerCase();
+  return TLD_MAP[tld] || null;
+}
+
+// Rezolva TOATE A record-urile (nu doar primul) + fallback la lookup
+async function resolveAllIps(hostname) {
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return [hostname];
   const cached = dnsCache.get(hostname);
-  if (cached && Date.now() - cached.ts < DNS_CACHE_TTL) return cached.ip;
+  if (cached && Date.now() - cached.ts < DNS_CACHE_TTL) return cached.ips;
   try {
-    const { address } = await dns.lookup(hostname, { family: 4 });
-    dnsCache.set(hostname, { ip: address, ts: Date.now() });
-    return address;
+    const ips = await dns.resolve4(hostname);
+    dnsCache.set(hostname, { ips, ts: Date.now() });
+    return ips;
   } catch {
-    return null;
+    try {
+      const { address } = await dns.lookup(hostname, { family: 4 });
+      dnsCache.set(hostname, { ips: [address], ts: Date.now() });
+      return [address];
+    } catch {
+      return [];
+    }
   }
 }
 
 async function getCountry(hostname) {
-  const ip = await resolveIp(hostname);
-  if (!ip) return null;
-  const geo = geoip.lookup(ip);
-  return geo?.country || null;
+  const known = countryFromKnownDomains(hostname) || countryFromTld(hostname);
+  if (known) return known;
+  const ips = await resolveAllIps(hostname);
+  for (const ip of ips) {
+    const geo = geoip.lookup(ip);
+    if (geo?.country) return geo.country;
+  }
+  return null;
 }
 
 async function isGeoBlocked(hostname) {
   const state = getGeoFilterState();
   if (!state.enabled || state.blockedCountries.length === 0) return { blocked: false };
 
-  const ip  = await resolveIp(hostname);
-  const geo = ip ? geoip.lookup(ip) : null;
-  const country = geo?.country || null;
-  if (!country) return { blocked: false };
+  // Strat 1: domenii cunoscute (baidu.com, vk.com etc.)
+  const knownCountry = countryFromKnownDomains(hostname);
+  if (knownCountry && state.blockedCountries.includes(knownCountry)) {
+    addAttack('geo', knownCountry, hostname, null);
+    return { blocked: true, country: knownCountry };
+  }
 
-  const blocked = state.blockedCountries.includes(country);
-  if (blocked) addAttack('geo', country, hostname, geo);
-  return { blocked, country };
+  // Strat 2: TLD-based (.cn, .ru etc.)
+  const tldCountry = countryFromTld(hostname);
+  if (tldCountry && state.blockedCountries.includes(tldCountry)) {
+    addAttack('geo', tldCountry, hostname, null);
+    return { blocked: true, country: tldCountry };
+  }
+
+  // Strat 3: Toate IP-urile DNS → geoip lookup
+  const ips = await resolveAllIps(hostname);
+  for (const ip of ips) {
+    const geo = geoip.lookup(ip);
+    if (!geo?.country) continue;
+    if (state.blockedCountries.includes(geo.country)) {
+      addAttack('geo', geo.country, hostname, geo);
+      return { blocked: true, country: geo.country };
+    }
+  }
+
+  return { blocked: false };
 }
 
 module.exports = { isGeoBlocked, getCountry, getRecentAttacks, addContentBlock };
