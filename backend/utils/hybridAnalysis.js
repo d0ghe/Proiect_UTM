@@ -270,8 +270,11 @@ function mapRawVerdict(value, fallback = null) {
     'benign',
     'safe',
     'no threat',
+    'no specific threat',
+    'no threat detected',
     'not malicious',
     'harmless',
+    'whitelisted',
   ].includes(normalized)) {
     return 'CLEAN';
   }
@@ -298,13 +301,76 @@ function normalizeScannerCollection(collection) {
   return [];
 }
 
-function buildReportUrl(config, reportId) {
-  if (!reportId) {
+function isSha256(value) {
+  return /^[a-f0-9]{64}$/i.test(String(value || '').trim());
+}
+
+function normalizeAnalysisStatus(value, fallback = 'completed') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (['in_queue', 'queued', 'queue', 'pending'].includes(normalized)) {
+    return 'queued';
+  }
+
+  if (['in_progress', 'running', 'processing', 'analyzing'].includes(normalized)) {
+    return 'running';
+  }
+
+  if (['success', 'finished', 'completed', 'complete', 'done', 'partial_success'].includes(normalized)) {
+    return 'completed';
+  }
+
+  if (['error', 'failed', 'failure', 'aborted', 'timeout'].includes(normalized)) {
+    return 'failed';
+  }
+
+  return normalized;
+}
+
+function buildReportUrl(config, reportRef) {
+  if (!reportRef) {
     return null;
   }
 
   const base = config?.baseUrl || DEFAULT_BASE_URL;
-  return `${base.replace('/api/v2', '') || 'https://www.hybrid-analysis.com'}/sample/${reportId}`;
+  const webBase = base.replace(/\/api\/v2$/i, '').replace(/\/+$/, '') || 'https://www.hybrid-analysis.com';
+  const reference = typeof reportRef === 'object' ? reportRef : { id: reportRef };
+  const sha256 = pickFirst(reference.sha256, isSha256(reference.id) ? reference.id : null);
+  const jobId = pickFirst(reference.jobId, reference.job_id, reference.id && !isSha256(reference.id) ? reference.id : null);
+  const fallbackId = pickFirst(reference.id, reference.submissionId, reference.submission_id);
+
+  if (sha256 && jobId) {
+    return `${webBase}/sample/${sha256}/${jobId}`;
+  }
+
+  const publicId = pickFirst(sha256, jobId, fallbackId);
+  return publicId ? `${webBase}/sample/${publicId}` : null;
+}
+
+function normalizeScannerSummary(collection) {
+  return normalizeScannerCollection(collection).map(({ key, value }) => ({
+    name: value?.name || key,
+    verdict: pickFirst(
+      value?.verdict,
+      value?.classification,
+      value?.label,
+      value?.result,
+      value?.statusRaw,
+      value?.status_raw,
+      value?.status,
+    ) || null,
+    score: pickFirst(
+      value?.score,
+      value?.confidence,
+      value?.threat_score,
+      value?.percent,
+      value?.positives,
+    ) || null,
+  }));
 }
 
 function extractCrowdStrikeVerdict(payload) {
@@ -326,6 +392,8 @@ function extractCrowdStrikeVerdict(payload) {
     crowdStrike.value?.verdict,
     crowdStrike.value?.classification,
     crowdStrike.value?.label,
+    crowdStrike.value?.statusRaw,
+    crowdStrike.value?.status_raw,
     crowdStrike.value?.status,
     crowdStrike.value?.result,
   );
@@ -336,7 +404,7 @@ function extractCrowdStrikeVerdict(payload) {
     crowdStrike.value?.threat_score,
   );
   const normalizedVerdict = mapRawVerdict(rawVerdict, null);
-  const isPending = normalizedVerdict === null && ['no-result', 'no result', 'in-queue', 'queued', 'pending', 'processing'].includes(String(rawVerdict || '').trim().toLowerCase());
+  const isPending = normalizedVerdict === null && ['no-result', 'no result', 'in-queue', 'in_queue', 'queued', 'pending', 'processing'].includes(String(rawVerdict || '').trim().toLowerCase());
 
   return createProviderResult({
     id: 'crowdstrike-ml',
@@ -421,35 +489,47 @@ function normalizeQuickScanPayload(payload, config = getHybridAnalysisConfig()) 
     return null;
   }
 
-  const reportId = pickFirst(payload.id, payload.quick_scan_id, payload.scan_id, payload.job_id, payload.sha256);
+  const sha256 = pickFirst(payload.sha256, payload.sha256_hex) || null;
+  const quickScanId = pickFirst(payload.id, payload.quick_scan_id, payload.scan_id);
+  const reportId = pickFirst(quickScanId, payload.job_id, sha256);
+  const crowdStrike = extractCrowdStrikeVerdict(payload);
   const rawVerdict = pickFirst(
     payload.verdict,
+    payload.verdict_human,
+    payload.threat_level_human,
     payload.threat_level,
     payload.classification,
     payload.result,
-    payload.state,
+    crowdStrike?.metadata?.rawVerdict,
   );
   const threatScore = pickFirst(payload.threat_score, payload.score, payload.vx_family_score);
-  const scannerSummary = normalizeScannerCollection(payload?.scanners_v2).map(({ key, value }) => ({
-    name: value?.name || key,
-    verdict: pickFirst(value?.verdict, value?.classification, value?.label, value?.result, value?.status) || null,
-    score: pickFirst(value?.score, value?.confidence, value?.threat_score) || null,
-  }));
+  const scannerSummary = normalizeScannerSummary(payload?.scanners_v2);
   const verdict = mapRawVerdict(rawVerdict, toNumber(threatScore, 0) > 0 ? 'REVIEW' : null);
-  const crowdStrike = extractCrowdStrikeVerdict(payload);
+  const status = normalizeAnalysisStatus(
+    pickFirst(payload.status, payload.state, payload.scan_status),
+    payload.finished ? 'completed' : 'queued',
+  );
+  const finished = Boolean(
+    payload.finished
+    || payload.done
+    || ['completed', 'failed'].includes(status)
+  );
 
   return {
     id: reportId ? String(reportId) : null,
-    status: String(pickFirst(payload.status, payload.state, payload.scan_status, payload.finished ? 'finished' : 'queued')).toLowerCase(),
-    finished: Boolean(payload.finished || payload.done || ['finished', 'completed', 'success'].includes(String(payload.status || payload.state || '').toLowerCase())),
+    quickScanId: quickScanId ? String(quickScanId) : null,
+    sha256: sha256 ? String(sha256) : null,
+    status: finished && status === 'queued' ? 'completed' : status,
+    finished,
     verdict,
     rawVerdict: rawVerdict || null,
     threatScore: toNumber(threatScore, null),
     classification: pickFirst(payload.classification, payload.vx_family, payload.type_short, payload.type) || null,
-    reportUrl: buildReportUrl(config, reportId),
+    reportUrl: buildReportUrl(config, { id: reportId, sha256 }),
     crowdStrike,
     scannerSummary,
     message: payload.message || null,
+    raw: payload,
   };
 }
 
@@ -460,25 +540,32 @@ function normalizeHashLookupPayload(payload, config = getHybridAnalysisConfig())
       ? payload.data
       : Array.isArray(payload?.result)
         ? payload.result
-        : [];
+        : Array.isArray(payload?.reports)
+          ? payload.reports
+          : [];
 
   if (items.length === 0) {
     return null;
   }
 
   const [match] = items;
-  const reportId = pickFirst(match?.id, match?.job_id, match?.sha256, match?.sha1);
-  const rawVerdict = pickFirst(match?.verdict, match?.threat_level, match?.state, match?.classification);
+  const sha256 = pickFirst(match?.sha256, match?.sha256_hex, payload?.sha256, payload?.sha256s?.[0]) || null;
+  const reportId = pickFirst(match?.id, match?.job_id, sha256, match?.sha1);
+  const rawVerdict = pickFirst(match?.verdict, match?.threat_level_human, match?.threat_level, match?.classification);
 
   return {
     found: true,
     id: reportId ? String(reportId) : null,
-    sha256: pickFirst(match?.sha256, match?.sha256_hex) || null,
+    sha256,
     verdict: mapRawVerdict(rawVerdict, toNumber(match?.threat_score, 0) > 0 ? 'REVIEW' : null),
     rawVerdict: rawVerdict || null,
     classification: pickFirst(match?.classification, match?.vx_family, match?.type_short, match?.type) || null,
     threatScore: toNumber(pickFirst(match?.threat_score, match?.score), null),
-    reportUrl: buildReportUrl(config, reportId),
+    reportUrl: buildReportUrl(config, {
+      id: reportId,
+      sha256,
+      jobId: match?.job_id || match?.id,
+    }),
     state: pickFirst(match?.state, match?.analysis_state, match?.status) || null,
     mitreTechniques: summarizeMitre(match),
     contactedHosts: summarizeHosts(match),
@@ -493,29 +580,112 @@ function normalizeReportOverviewPayload(payload, config = getHybridAnalysisConfi
     return null;
   }
 
-  const reportId = pickFirst(payload.id, payload.job_id, payload.sha256, payload.sha1);
-  const rawVerdict = pickFirst(payload.verdict, payload.threat_level, payload.classification, payload.state, payload.result);
-  const state = String(pickFirst(payload.state, payload.status, payload.analysis_state, 'completed')).toLowerCase();
+  const sha256 = pickFirst(payload.sha256, payload.sha256_hex) || null;
+  const jobId = pickFirst(payload.job_id, payload.id && !isSha256(payload.id) ? payload.id : null);
+  const reportId = pickFirst(jobId, sha256, payload.id, payload.sha1);
+  const rawVerdict = pickFirst(
+    payload.verdict,
+    payload.verdict_human,
+    payload.threat_level_human,
+    payload.threat_level,
+    payload.classification,
+    payload.result,
+  );
+  const status = normalizeAnalysisStatus(pickFirst(payload.state, payload.status, payload.analysis_state), 'completed');
 
   return {
     id: reportId ? String(reportId) : null,
-    status: ['queued', 'running', 'processing'].includes(state) ? state : state === 'error' ? 'failed' : 'completed',
+    sha256: sha256 ? String(sha256) : null,
+    jobId: jobId ? String(jobId) : null,
+    status,
     verdict: mapRawVerdict(rawVerdict, toNumber(pickFirst(payload.threat_score, payload.score), 0) > 0 ? 'REVIEW' : null),
     rawVerdict: rawVerdict || null,
-    reportUrl: buildReportUrl(config, reportId),
+    reportUrl: buildReportUrl(config, { id: reportId, sha256, jobId }),
     classification: pickFirst(payload.classification, payload.vx_family, payload.type_short, payload.type) || null,
     threatScore: toNumber(pickFirst(payload.threat_score, payload.score), null),
     mitreTechniques: summarizeMitre(payload),
     contactedHosts: summarizeHosts(payload),
     droppedFiles: summarizeDroppedFiles(payload),
     signatures: summarizeSignatures(payload),
-    scannerSummary: normalizeScannerCollection(payload?.scanners_v2).map(({ key, value }) => ({
-      name: value?.name || key,
-      verdict: pickFirst(value?.verdict, value?.classification, value?.label, value?.result, value?.status) || null,
-      score: pickFirst(value?.score, value?.confidence, value?.threat_score) || null,
-    })),
+    scannerSummary: normalizeScannerSummary(payload?.scanners_v2),
     crowdStrike: extractCrowdStrikeVerdict(payload),
     message: payload.message || null,
+    raw: payload,
+  };
+}
+
+function normalizeReportStatePayload(payload, config = getHybridAnalysisConfig(), reportRef = {}) {
+  if (!payload) {
+    return null;
+  }
+
+  const relatedReport = Array.isArray(payload.related_reports) ? payload.related_reports[0] : null;
+  const sha256 = pickFirst(payload.sha256, relatedReport?.sha256, reportRef.sha256) || null;
+  const jobId = pickFirst(payload.job_id, relatedReport?.job_id, reportRef.jobId, reportRef.id && !isSha256(reportRef.id) ? reportRef.id : null);
+  const reportId = pickFirst(jobId, sha256, reportRef.id);
+  const rawVerdict = pickFirst(payload.verdict, relatedReport?.verdict);
+  const status = normalizeAnalysisStatus(payload.state || payload.status, 'running');
+
+  return {
+    id: reportId ? String(reportId) : null,
+    sha256: sha256 ? String(sha256) : null,
+    jobId: jobId ? String(jobId) : null,
+    status,
+    verdict: mapRawVerdict(rawVerdict, null),
+    rawVerdict: rawVerdict || null,
+    reportUrl: buildReportUrl(config, { id: reportId, sha256, jobId }),
+    classification: null,
+    threatScore: null,
+    mitreTechniques: [],
+    contactedHosts: [],
+    droppedFiles: [],
+    signatures: [],
+    scannerSummary: [],
+    crowdStrike: null,
+    message: pickFirst(payload.message, payload.error, payload.error_type, payload.error_origin) || null,
+    raw: payload,
+  };
+}
+
+function mergeQuickScanWithOverview(quickScan, overview) {
+  if (!overview) {
+    return quickScan;
+  }
+
+  const status = overview.status || quickScan.status;
+
+  return {
+    ...quickScan,
+    status,
+    finished: quickScan.finished || ['completed', 'failed'].includes(status),
+    verdict: overview.verdict || quickScan.verdict,
+    rawVerdict: overview.rawVerdict || quickScan.rawVerdict,
+    threatScore: overview.threatScore ?? quickScan.threatScore,
+    classification: overview.classification || quickScan.classification,
+    reportUrl: overview.reportUrl || quickScan.reportUrl,
+    scannerSummary: overview.scannerSummary?.length ? overview.scannerSummary : quickScan.scannerSummary,
+    crowdStrike: overview.crowdStrike || quickScan.crowdStrike,
+    message: overview.message || quickScan.message,
+    overview,
+  };
+}
+
+function normalizeSubmissionPayload(payload, config = getHybridAnalysisConfig(), environmentId = null) {
+  const jobId = pickFirst(payload?.job_id, payload?.id) || null;
+  const submissionId = pickFirst(payload?.submission_id, payload?.submissionId) || null;
+  const sha256 = pickFirst(payload?.sha256, payload?.sha256_hex) || null;
+  const id = pickFirst(jobId, submissionId, sha256);
+  const reportRef = pickFirst(jobId, sha256 && environmentId ? `${sha256}:${environmentId}` : null, sha256);
+
+  return {
+    id: id ? String(id) : null,
+    jobId: jobId ? String(jobId) : null,
+    submissionId: submissionId ? String(submissionId) : null,
+    sha256: sha256 ? String(sha256) : null,
+    reportRef: reportRef ? String(reportRef) : null,
+    reportUrl: buildReportUrl(config, { id, sha256, jobId }),
+    raw: payload,
+    environmentId,
   };
 }
 
@@ -692,6 +862,106 @@ function createHybridAnalysisClient({
     throw lastError;
   }
 
+  function buildReportCandidates(reportId, options = {}) {
+    const candidates = [];
+    const pushCandidate = (value) => {
+      if (value !== undefined && value !== null && value !== '') {
+        const candidate = String(value);
+        if (!candidates.includes(candidate)) {
+          candidates.push(candidate);
+        }
+      }
+    };
+
+    const sha256 = pickFirst(options.sha256, isSha256(reportId) ? reportId : null);
+    const environmentId = pickFirst(options.environmentId, options.environment_id, config.environmentId);
+    const jobId = pickFirst(options.jobId, options.job_id, reportId && !isSha256(reportId) ? reportId : null);
+
+    pushCandidate(reportId);
+    pushCandidate(jobId);
+    if (sha256 && environmentId) {
+      pushCandidate(`${sha256}:${environmentId}`);
+    }
+    pushCandidate(sha256);
+
+    return candidates;
+  }
+
+  async function getOverview(sha256) {
+    if (!isSha256(sha256)) {
+      throw new Error('Hybrid Analysis overview lookup requires a SHA256 hash.');
+    }
+
+    try {
+      const payload = await request('GET', `/overview/${sha256}`);
+      return normalizeReportOverviewPayload(payload, config);
+    } catch (error) {
+      if (error.status !== 404) {
+        throw error;
+      }
+
+      const fallback = await request('GET', `/overview/${sha256}/summary`);
+      return normalizeReportOverviewPayload(fallback, config);
+    }
+  }
+
+  async function hydrateQuickScanWithOverview(quickScan, options = {}) {
+    if (!quickScan?.sha256 || (!quickScan.finished && options.fetchOverviewWhenPending !== true)) {
+      return quickScan;
+    }
+
+    try {
+      const overview = await getOverview(quickScan.sha256);
+      return mergeQuickScanWithOverview(quickScan, overview);
+    } catch (error) {
+      if (isRetryableValidationError(error)) {
+        return quickScan;
+      }
+
+      throw error;
+    }
+  }
+
+  async function requestFirstReportCandidate(candidates, endpointBuilder, normalize) {
+    let lastError = null;
+
+    for (const candidate of candidates) {
+      try {
+        const payload = await request('GET', endpointBuilder(encodeURIComponent(candidate)));
+        return normalize(payload, candidate);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableValidationError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  async function getReportState(reportId, options = {}) {
+    const candidates = buildReportCandidates(reportId, options);
+    return requestFirstReportCandidate(
+      candidates,
+      (candidate) => `/report/${candidate}/state`,
+      (payload, candidate) => normalizeReportStatePayload(payload, config, {
+        id: candidate,
+        jobId: options.jobId || (!isSha256(candidate) && !candidate.includes(':') ? candidate : null),
+        sha256: options.sha256 || (isSha256(candidate) ? candidate : null),
+      }),
+    );
+  }
+
+  async function getReportSummary(reportId, options = {}) {
+    const candidates = buildReportCandidates(reportId, options);
+    return requestFirstReportCandidate(
+      candidates,
+      (candidate) => `/report/${candidate}/summary`,
+      (payload) => normalizeReportOverviewPayload(payload, config),
+    );
+  }
+
   async function quickScanFile(file, options = {}) {
     const environmentId = pickFirst(options.environmentId, config.environmentId);
     const scanType = pickFirst(options.scanType, 'all');
@@ -743,9 +1013,9 @@ function createHybridAnalysisClient({
 
     let quickScan = normalizeQuickScanPayload(payload, config);
 
-    if (quickScan?.id && !quickScan.finished && options.waitForCompletion !== false) {
+    if (quickScan?.quickScanId && !quickScan.finished && options.waitForCompletion !== false) {
       try {
-        quickScan = await waitForQuickScan(quickScan.id, options);
+        quickScan = await waitForQuickScan(quickScan.quickScanId, options);
       } catch (error) {
         if (!isRetryableValidationError(error)) {
           throw error;
@@ -760,15 +1030,13 @@ function createHybridAnalysisClient({
       }
     }
 
-    return quickScan;
+    return hydrateQuickScanWithOverview(quickScan, options);
   }
 
   async function getQuickScan(scanId) {
     const attempts = [
       () => request('GET', `/quick-scan/${scanId}`),
       () => request('GET', '/quick-scan', { params: { id: scanId } }),
-      () => request('GET', `/quick-scan/state/${scanId}`),
-      () => request('GET', '/quick-scan/state', { params: { id: scanId } }),
     ];
 
     let lastError = null;
@@ -795,7 +1063,7 @@ function createHybridAnalysisClient({
 
     while (Date.now() <= deadline) {
       latest = await getQuickScan(scanId);
-      if (!latest || latest.finished || ['completed', 'finished', 'failed'].includes(latest.status)) {
+      if (!latest || latest.finished || ['completed', 'failed'].includes(latest.status)) {
         return latest;
       }
 
@@ -819,12 +1087,7 @@ function createHybridAnalysisClient({
     });
 
     const payload = await request('POST', '/submit/file', { data: formData });
-    return {
-      id: pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256) ? String(pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256)) : null,
-      reportUrl: buildReportUrl(config, pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256)),
-      raw: payload,
-      environmentId,
-    };
+    return normalizeSubmissionPayload(payload, config, environmentId);
   }
 
   async function submitUrl(url, options = {}) {
@@ -855,22 +1118,42 @@ function createHybridAnalysisClient({
 
       payload = await request('POST', '/submit/url-to-file', { data: formData });
     }
-    return {
-      id: pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256) ? String(pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256)) : null,
-      reportUrl: buildReportUrl(config, pickFirst(payload?.id, payload?.job_id, payload?.submission_id, payload?.sha256)),
-      raw: payload,
-      environmentId,
-    };
+    return normalizeSubmissionPayload(payload, config, environmentId);
   }
 
-  async function getReportOverview(reportId) {
+  async function getReportOverview(reportId, options = {}) {
+    let state = null;
     try {
-      const payload = await request('GET', `/report/${reportId}/overview`);
-      return normalizeReportOverviewPayload(payload, config);
+      state = await getReportState(reportId, options);
+      if (state && ['queued', 'running', 'failed'].includes(state.status)) {
+        return state;
+      }
     } catch (error) {
-      if (error.status === 404) {
-        const fallback = await request('GET', `/overview/${reportId}`);
-        return normalizeReportOverviewPayload(fallback, config);
+      if (!isRetryableValidationError(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      return await getReportSummary(reportId, options);
+    } catch (error) {
+      if (!isRetryableValidationError(error)) {
+        throw error;
+      }
+
+      const sha256 = pickFirst(options.sha256, isSha256(reportId) ? reportId : null);
+      if (sha256) {
+        try {
+          return await getOverview(sha256);
+        } catch (overviewError) {
+          if (!isRetryableValidationError(overviewError)) {
+            throw overviewError;
+          }
+        }
+      }
+
+      if (state) {
+        return state;
       }
 
       throw error;
@@ -884,7 +1167,7 @@ function createHybridAnalysisClient({
     let latest = null;
 
     while (Date.now() <= deadline) {
-      latest = await getReportOverview(reportId);
+      latest = await getReportOverview(reportId, options);
       if (!latest || ['completed', 'failed'].includes(latest.status)) {
         return latest;
       }
@@ -897,8 +1180,11 @@ function createHybridAnalysisClient({
 
   return {
     config,
+    getOverview,
     getQuickScan,
     getReportOverview,
+    getReportState,
+    getReportSummary,
     lookupHash,
     pollSandboxReport,
     quickScanFile,

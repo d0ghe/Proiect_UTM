@@ -143,6 +143,10 @@ function scanBufferForHexSignatures(fileBuffer) {
         break;
       }
 
+      if (chunkEnd >= fileBuffer.length) {
+        break;
+      }
+
       chunkStart = chunkEnd - overlap;
       if (chunkStart < 0) {
         chunkStart = 0;

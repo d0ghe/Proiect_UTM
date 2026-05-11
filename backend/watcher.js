@@ -35,7 +35,7 @@ const QUARANTINE_DIR = path.join(__dirname, 'quarantine');
 if (!fs.existsSync(QUARANTINE_DIR)) fs.mkdirSync(QUARANTINE_DIR);
 const REPO_ROOT = path.resolve(__dirname, '..');
 const EICAR_MARKER = ['EICAR', 'STANDARD', 'ANTIVIRUS', 'TEST', 'FILE'].join('-');
-const AUTO_QUARANTINE_THRESHOLD = Number(process.env.AUTO_QUARANTINE_THRESHOLD || 70);
+const AUTO_QUARANTINE_THRESHOLD = Number(process.env.AUTO_QUARANTINE_THRESHOLD || 85);
 const MAX_AUTO_SCAN_BYTES = 25 * 1024 * 1024; // 25 MB
 
 const ignoredRoots = [QUARANTINE_DIR, REPO_ROOT].map((entry) => path.resolve(entry));
@@ -138,24 +138,35 @@ async function scanFile(filePath) {
       entropyResult,
       evasionResult,
       injectionResult,
+      peResult,
     });
 
     // YARA rule matching
     const yaraResult   = runRules(fileBuffer, getRulesText());
     const yaraCritical = yaraResult.matched.filter((m) => m.severity === 'critical');
-    const yaraScore    = Math.min(yaraCritical.length * 40 + yaraResult.matched.filter((m) => m.severity === 'warning').length * 15, 60);
+    const yaraWarning  = yaraResult.matched.filter((m) => m.severity === 'warning');
+    const isPortableExecutable = Boolean(peResult?.isValidPE);
+    const yaraScore = Math.min(
+      yaraCritical.length * 35 + yaraWarning.length * 10,
+      isPortableExecutable ? 45 : 60,
+    );
+    const supplementalScore = Math.min(
+      (iocs.suspicionScore || 0)
+      + (stringDecoded.riskContribution || 0)
+      + (scriptResult.riskContribution || 0),
+      isPortableExecutable ? 25 : 40,
+    );
 
     heuristicScore.score = Math.min(
       100,
       heuristicScore.score
-      + (iocs.suspicionScore || 0)
-      + (stringDecoded.riskContribution || 0)
-      + (scriptResult.riskContribution || 0)
+      + supplementalScore
       + yaraScore,
     );
-    if (heuristicScore.score >= 70) heuristicScore.verdict = 'HIGH_RISK';
-    else if (heuristicScore.score >= 40) heuristicScore.verdict = 'MEDIUM_RISK';
+    if (heuristicScore.score >= 85) heuristicScore.verdict = 'HIGH_RISK';
+    else if (heuristicScore.score >= 55) heuristicScore.verdict = 'MEDIUM_RISK';
     else if (heuristicScore.score >= 15) heuristicScore.verdict = 'LOW_RISK';
+    else heuristicScore.verdict = 'MINIMAL_RISK';
 
     const mitreTechniques = mapToMitre({
       evasionIndicators: evasionResult.indicators,
@@ -177,9 +188,15 @@ async function scanFile(filePath) {
           const e = analyzeEntropy(buf);
           const ev = detectEvasion(buf);
           const inj = detectSubbyteInjection(buf);
-          const hs = computeHeuristicScore({ hexMatches: h.matches, entropyResult: e, evasionResult: ev, injectionResult: inj });
+          const pe = parsePE(buf);
+          const hs = computeHeuristicScore({ hexMatches: h.matches, entropyResult: e, evasionResult: ev, injectionResult: inj, peResult: pe });
           const yr = runRules(buf, getRulesText());
-          hs.score = Math.min(100, hs.score + yr.matched.filter((m) => m.severity === 'critical').length * 40);
+          const archiveYaraScore = Math.min(
+            yr.matched.filter((m) => m.severity === 'critical').length * 35
+            + yr.matched.filter((m) => m.severity === 'warning').length * 10,
+            pe?.isValidPE ? 45 : 60,
+          );
+          hs.score = Math.min(100, hs.score + archiveYaraScore);
           return { filename: name, status: hs.score >= AUTO_QUARANTINE_THRESHOLD || yr.matched.some((m) => m.severity === 'critical') ? 'INFECTED' : 'CLEAN', score: hs.score };
         });
         const infected = entries.filter((e) => e.status === 'INFECTED');
@@ -198,7 +215,8 @@ async function scanFile(filePath) {
     });
 
     const criticalHex = hexResult.matches.filter((m) => m.severity === 'critical');
-    const shouldQuarantine = criticalHex.length > 0
+    const eicarHexMatch = criticalHex.find((match) => match.name === 'EICAR_Hex_Signature');
+    const shouldQuarantine = eicarHexMatch
       || yaraCritical.length > 0
       || archiveThreat !== null
       || heuristicScore.score >= AUTO_QUARANTINE_THRESHOLD;
@@ -208,8 +226,8 @@ async function scanFile(filePath) {
         ? `YARA: ${yaraCritical.map((m) => m.name).join(', ')}`
         : archiveThreat
           ? archiveThreat
-          : criticalHex.length > 0
-            ? `Critical hex: ${criticalHex[0].name}`
+          : eicarHexMatch
+            ? `Critical hex: ${eicarHexMatch.name}`
             : `Heuristic score ${heuristicScore.score}/100 (${heuristicScore.verdict})`;
       notifyThreat(fileName, reason);
       const dest = quarantine(filePath, reason);
@@ -225,7 +243,7 @@ async function scanFile(filePath) {
         mitre: mitreTechniques.slice(0, 5).map((t) => t.id),
         quarantinePath: dest,
       });
-    } else if (heuristicScore.score >= 40) {
+    } else if (heuristicScore.score >= 55 || criticalHex.length > 0) {
       console.log(`[⚠️] Suspicious: ${fileName} (score ${heuristicScore.score})`);
       addActivityEntry('WARNING', 'Protection', `Suspicious File: ${fileName}`, `Heuristic ${heuristicScore.score}/100`);
       broadcast({

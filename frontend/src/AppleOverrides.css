@@ -2030,3 +2030,357 @@ body { background-image: none !important; }
   animation: none !important;
   box-shadow: none !important;
 }
+
+/* Responsive containment pass */
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.control-app {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.control-main {
+  width: 100%;
+  min-width: 0;
+  max-width: calc(100vw - var(--sidebar-w)) !important;
+  overflow-x: clip;
+  padding: clamp(14px, 2vw, 32px) !important;
+}
+
+.page-content,
+.panel-card,
+.module-card,
+.stat-card,
+.result-stack,
+.analysis-result-card,
+.analysis-result-body,
+.analysis-result-main,
+.deep-analysis,
+.deep-analysis__grid,
+.deep-card,
+.heatmap-row,
+.entropy-heatmap,
+.ioc-block,
+.pe-block,
+.analysis-inline-grid,
+.analysis-job-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.panel-card,
+.analysis-result-card,
+.deep-analysis,
+.heatmap-row,
+.ioc-block,
+.pe-block,
+.analysis-inline-grid,
+.analysis-job-card {
+  overflow: hidden !important;
+}
+
+.panel-grid--split {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)) !important;
+}
+
+.panel-grid--stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)) !important;
+}
+
+.panel-grid--triple,
+.module-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)) !important;
+}
+
+.analysis-result-card {
+  container-type: inline-size;
+}
+
+.analysis-result-card__top {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.result-item__main {
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.result-item__main strong,
+.result-item__main span,
+.analysis-job-card h4,
+.analysis-job-card__copy,
+.stack-item p,
+.detail-row,
+.data-pair,
+.deep-card__title,
+.deep-card__verdict,
+.deep-card__note,
+.deep-card__empty,
+.deep-card__list,
+.ioc-block p,
+.pe-block p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.analysis-result-body {
+  display: block;
+  width: 100%;
+}
+
+.analysis-result-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, clamp(280px, 30vw, 380px));
+  align-items: start;
+  gap: 14px 18px;
+  width: 100%;
+}
+
+.analysis-result-main > .provider-chip-row {
+  grid-column: 1 / -1;
+}
+
+.analysis-result-main > .hex-match-row,
+.analysis-result-main > .heatmap-row,
+.analysis-result-main > .ioc-block,
+.analysis-result-main > .form-actions {
+  grid-column: 1;
+}
+
+.analysis-result-main > .deep-analysis,
+.analysis-result-main > .mitre-chips,
+.analysis-result-main > .pe-block,
+.analysis-result-main > .analysis-inline-grid,
+.analysis-result-main > .analysis-job-card {
+  grid-column: 2;
+}
+
+.analysis-result-main > .deep-analysis {
+  margin-top: 0 !important;
+}
+
+.provider-chip-row,
+.hex-match-row,
+.mitre-chips,
+.pe-sections,
+.deep-card__chips,
+.form-actions,
+.analysis-job-card__actions {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.meta-chip,
+.hex-chip,
+.mitre-chip,
+.deep-chip,
+.pe-section,
+.status-badge {
+  max-width: 100%;
+  min-width: 0;
+  height: auto !important;
+  min-height: 18px;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35 !important;
+}
+
+.meta-chip,
+.hex-chip,
+.mitre-chip,
+.deep-chip,
+.pe-section {
+  display: inline-flex !important;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mitre-chip small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.deep-analysis__header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.deep-score {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.deep-analysis__grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+}
+
+.deep-card {
+  overflow: hidden;
+}
+
+.deep-card__list {
+  padding-right: 2px;
+}
+
+.deep-card__list li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deep-card__sparkline,
+.entropy-heatmap canvas {
+  max-width: 100%;
+}
+
+.ioc-block code,
+.pe-block code,
+.pe-section code,
+.intel-list li code,
+.stack-item code {
+  max-width: 100%;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ioc-block code,
+.pe-block code {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.pe-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+}
+
+.table-wrap {
+  overflow-x: auto !important;
+  overflow-y: hidden;
+}
+
+.data-table {
+  min-width: 640px;
+}
+
+@media (max-width: 1180px) {
+  .analysis-result-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .analysis-result-main > .provider-chip-row,
+  .analysis-result-main > .hex-match-row,
+  .analysis-result-main > .heatmap-row,
+  .analysis-result-main > .ioc-block,
+  .analysis-result-main > .form-actions,
+  .analysis-result-main > .deep-analysis,
+  .analysis-result-main > .mitre-chips,
+  .analysis-result-main > .pe-block,
+  .analysis-result-main > .analysis-inline-grid,
+  .analysis-result-main > .analysis-job-card {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .control-app {
+    flex-direction: column;
+  }
+
+  .control-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+
+  .sidebar-brand {
+    min-height: 60px;
+    padding: 10px 14px !important;
+  }
+
+  .sidebar-nav {
+    flex-direction: row !important;
+    gap: 6px !important;
+    overflow-x: auto;
+    padding: 8px 12px !important;
+    scrollbar-width: thin;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    width: auto !important;
+    white-space: nowrap;
+  }
+
+  .control-main {
+    max-width: 100vw !important;
+    padding: 14px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 13px !important;
+  }
+
+  .control-main {
+    padding: 10px !important;
+  }
+
+  .module-card,
+  .panel-card {
+    padding: 14px !important;
+    border-radius: var(--radius) !important;
+  }
+
+  .analysis-result-card {
+    padding: 12px !important;
+  }
+
+  .analysis-result-card__top,
+  .analysis-job-card {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  .analysis-result-card__top .status-badge {
+    align-self: flex-start;
+  }
+
+  .deep-analysis {
+    padding: 12px !important;
+  }
+
+  .deep-analysis__grid,
+  .analysis-inline-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .control-btn {
+    min-height: 32px;
+    height: auto !important;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .form-actions .control-btn {
+    flex: 1 1 180px;
+  }
+}

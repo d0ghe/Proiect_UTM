@@ -78,9 +78,10 @@ rule Cobalt_Strike {
     $a = "cobaltstrike"
     $b = "beacon.dll"
     $c = "CS_SLEEP"
-    $d = { 4d 5a 90 00 03 00 00 00 04 00 00 00 ff ff }
+    $d = "beacon.x64.dll"
     $e = "pipe\\MSSE-"
     $f = "ReflectiveDll"
+    $g = "beacon.x86.dll"
   condition:
     any of them
 }

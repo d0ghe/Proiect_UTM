@@ -4,8 +4,8 @@ const { exec, spawnSync } = require('child_process');
 
 const { CATEGORY_IDS, setBlockedDomains } = require('../store/contentFilterStore');
 
-// Blochează QUIC (HTTP/3 pe UDP 443) ca Facebook/TikTok să nu ocolească proxy-ul TCP
-// Funcționează doar când backend-ul rulează ca Administrator
+// Optional hardening for the legacy browser proxy mode.
+// Disabled by default because blocking all outbound UDP 443 can interrupt normal browsing.
 const QUIC_RULE = 'UTM_BLOCK_QUIC_UDP443';
 function applyQuicBlock() {
   exec(
@@ -78,6 +78,38 @@ const CATEGORY_LIBRARY = {
     sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/doh-vpn-proxy-bypass-onlydomains.txt',
   },
 };
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['false', '0', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function isBrowserProxyEnabled() {
+  return parseBoolean(
+    process.env.CONTENT_FILTER_BROWSER_PROXY_ENABLED || process.env.CONTENT_FILTER_PROXY_ENABLED,
+    false,
+  );
+}
+
+function isQuicBlockEnabled() {
+  return parseBoolean(process.env.CONTENT_FILTER_BLOCK_QUIC, false);
+}
 
 function createContentFilterError(message, status = 400, code = 'CONTENT_FILTER_ERROR') {
   const error = new Error(message);
@@ -418,11 +450,12 @@ async function syncPolicy(policy, options = {}) {
 
 async function applyPolicy(policy, options = {}) {
   const compiled = await syncPolicy(policy, options);
+  const proxyEnabled = isBrowserProxyEnabled();
 
-  // Populează cache-ul în memorie — proxy-ul blochează dacă există categorii selectate,
-  // indiferent de toggle-ul "enabled" (care controlează doar hosts file-ul)
+  // Keep the legacy browser proxy fully opt-in. By default the app only writes
+  // the hosts file and does not intercept browser traffic.
   const hasContent = compiled.domains.length > 0;
-  if (hasContent) {
+  if (proxyEnabled && hasContent) {
     setBlockedDomains(compiled.domains);
   } else {
     setBlockedDomains([]);
@@ -447,22 +480,31 @@ async function applyPolicy(policy, options = {}) {
       hostsApplied = true;
     }
     dnsFlushMessage = flushDnsCache();
+  } else if (proxyEnabled) {
+    dnsFlushMessage = environment.canWrite === false
+      ? 'Hosts file needs admin - browser proxy fallback is active.'
+      : 'Browser proxy fallback is active.';
   } else {
     dnsFlushMessage = environment.canWrite === false
-      ? 'Hosts file necesită admin — blocare activă doar prin proxy (Chrome/Edge).'
-      : 'Blocare activă prin proxy (Chrome/Edge).';
+      ? 'Hosts file needs admin; browser proxy is disabled, so no system-wide blocking was applied.'
+      : 'Browser proxy is disabled and no supported hosts target is available.';
   }
 
-  const applied = hasContent;
+  const proxyApplied = proxyEnabled && hasContent;
+  const applied = hostsApplied || proxyApplied;
+  const enforcementMode = hostsApplied ? 'hosts' : proxyApplied ? 'proxy' : 'none';
 
-  // Blochează și QUIC (UDP 443) dacă sunt domenii active — previne ocolirea proxy-ului TCP
-  if (applied) applyQuicBlock();
+  // QUIC blocking is also opt-in because it affects every HTTPS/HTTP3 site.
+  if (proxyApplied && isQuicBlockEnabled()) applyQuicBlock();
   else removeQuicBlock();
 
   return {
     ...compiled,
     applied,
+    enforcementMode,
     hostsApplied,
+    proxyEnabled,
+    quicBlocked: proxyApplied && isQuicBlockEnabled(),
     appliedDomainCount: applied ? compiled.domains.length : 0,
     dnsFlushMessage,
     lastApplyAt: new Date().toISOString(),
@@ -470,12 +512,14 @@ async function applyPolicy(policy, options = {}) {
 }
 
 function removeManagedBlock() {
-  // Golește cache-ul proxy și elimină regula QUIC
+  // Clear optional proxy cache and remove optional QUIC rule.
   setBlockedDomains([]);
   removeQuicBlock();
 
   const environment = inspectEnvironment();
-  let dnsFlushMessage = 'Proxy cache cleared.';
+  let dnsFlushMessage = isBrowserProxyEnabled()
+    ? 'Proxy cache cleared.'
+    : 'Content-filter cache cleared.';
 
   if (environment.supported && environment.canWrite) {
     const hostsPath = environment.hostsPath;
@@ -494,6 +538,11 @@ function removeManagedBlock() {
 
 // Apelat la startup — reîncarcă domeniile din cache local (fără rețea)
 async function initBlockedDomains(policy) {
+  if (!isBrowserProxyEnabled()) {
+    setBlockedDomains([]);
+    return;
+  }
+
   if (!policy?.enabled) return;
   try {
     const compiled = await compilePolicy(policy, { sync: false });

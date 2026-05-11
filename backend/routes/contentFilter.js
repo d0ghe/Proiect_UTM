@@ -49,6 +49,34 @@ function buildPolicyPatch(body = {}) {
   return patch;
 }
 
+function buildApplyRuntimeMessage(result) {
+  if (result.applied) {
+    if (result.enforcementMode === 'proxy') {
+      return `${result.appliedDomainCount} domenii blocate prin proxy optional (Chrome/Edge).`;
+    }
+
+    return `${result.appliedDomainCount} domenii blocate prin hosts file.`;
+  }
+
+  if ((result.domains?.length || 0) > 0) {
+    return 'Blocarea nu a fost aplicata: ruleaza backend-ul ca Administrator pentru hosts file. Proxy-ul browser este dezactivat.';
+  }
+
+  return 'Nicio categorie selectata - blocarea a fost dezactivata.';
+}
+
+function buildApplyResponseMessage(result) {
+  if (result.applied) {
+    return `Blocare activa: ${result.appliedDomainCount} domenii.`;
+  }
+
+  if ((result.domains?.length || 0) > 0) {
+    return 'Blocarea nu a fost aplicata. Ruleaza backend-ul ca Administrator pentru hosts file sau activeaza explicit proxy-ul optional.';
+  }
+
+  return 'Nicio categorie selectata.';
+}
+
 router.get('/', (_req, res) => {
   res.json({
     success: true,
@@ -116,16 +144,12 @@ router.post('/apply', async (req, res) => {
       lastApplyAt: result.lastApplyAt,
       dnsFlushMessage: result.dnsFlushMessage,
       lastError: '',
-      lastMessage: result.applied
-        ? `${result.appliedDomainCount} domenii blocate prin proxy (Chrome/Edge).`
-        : 'Nicio categorie selectată — blocarea a fost dezactivată.',
+      lastMessage: buildApplyRuntimeMessage(result),
     });
 
     res.json({
       success: true,
-      message: result.applied
-        ? `Blocare activă: ${result.appliedDomainCount} domenii.`
-        : 'Nicio categorie selectată.',
+      message: buildApplyResponseMessage(result),
       ...buildOverview(getContentFilterState()),
     });
   } catch (error) {

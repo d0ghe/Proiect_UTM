@@ -267,7 +267,6 @@ function createLocalHeuristicResult(file, fileHash) {
   // Scanare Hex / Buffer (Anti-Obfuscare) — scanează date brute, chunk cu chunk
   const hexResult = scanBufferForHexSignatures(file.buffer);
   const criticalHex = hexResult.matches.filter((m) => m.severity === 'critical');
-  const warningHex  = hexResult.matches.filter((m) => m.severity === 'warning');
 
   // ─── Module de analiză profundă (entropy/evasion/injection/IOC/script/PE) ─
   const entropyResult   = analyzeEntropy(file.buffer);
@@ -277,31 +276,47 @@ function createLocalHeuristicResult(file, fileHash) {
   const stringDecoded   = decodeStrings(file.buffer);
   const scriptResult    = analyzeScript(file.buffer, file.originalname);
   const peResult        = parsePE(file.buffer);
+  const warningHex = hexResult.matches.filter((m) => (
+    m.severity === 'warning'
+    && !(peResult?.isValidPE && (
+      (m.name === 'PE_Executable_Header' && Number(m.offset || 0) === 0)
+      || m.name === 'Debugger_Trap_Sequence'
+    ))
+  ));
 
   const heuristicScore  = computeHeuristicScore({
     hexMatches: hexResult.matches,
     entropyResult,
     evasionResult,
     injectionResult,
+    peResult,
   });
 
   // YARA rule matching — runs across entire buffer
   const yaraResult    = runRules(file.buffer, getRulesText());
   const yaraCritical  = yaraResult.matched.filter((m) => m.severity === 'critical');
   const yaraWarning   = yaraResult.matched.filter((m) => m.severity === 'warning');
-  const yaraScore     = Math.min(yaraCritical.length * 40 + yaraWarning.length * 15, 60);
+  const isPortableExecutable = Boolean(peResult?.isValidPE);
+  const yaraScore = Math.min(
+    yaraCritical.length * 35 + yaraWarning.length * 10,
+    isPortableExecutable ? 45 : 60,
+  );
+  const supplementalScore = Math.min(
+    (iocs.suspicionScore || 0)
+    + (stringDecoded.riskContribution || 0)
+    + (scriptResult.riskContribution || 0),
+    isPortableExecutable ? 25 : 40,
+  );
 
   // Boost score cu IOC + script + decoded + YARA
   heuristicScore.score = Math.min(
     100,
     heuristicScore.score
-    + (iocs.suspicionScore || 0)
-    + (stringDecoded.riskContribution || 0)
-    + (scriptResult.riskContribution || 0)
+    + supplementalScore
     + yaraScore,
   );
-  if (heuristicScore.score >= 70) heuristicScore.verdict = 'HIGH_RISK';
-  else if (heuristicScore.score >= 40) heuristicScore.verdict = 'MEDIUM_RISK';
+  if (heuristicScore.score >= 85) heuristicScore.verdict = 'HIGH_RISK';
+  else if (heuristicScore.score >= 55) heuristicScore.verdict = 'MEDIUM_RISK';
   else if (heuristicScore.score >= 15) heuristicScore.verdict = 'LOW_RISK';
   else heuristicScore.verdict = 'MINIMAL_RISK';
 
@@ -351,9 +366,10 @@ function createLocalHeuristicResult(file, fileHash) {
     };
   }
 
-  if (hexResult.detected && criticalHex.length > 0) {
-    const sigSummary = buildSignatureSummary(hexResult.matches);
-    const firstMatch = criticalHex[0];
+  const eicarHexMatch = criticalHex.find((match) => match.name === 'EICAR_Hex_Signature');
+  if (eicarHexMatch) {
+    const sigSummary = buildSignatureSummary([eicarHexMatch]);
+    const firstMatch = eicarHexMatch;
 
     return {
       detected: true,
@@ -376,10 +392,35 @@ function createLocalHeuristicResult(file, fileHash) {
     };
   }
 
+  if (criticalHex.length > 0) {
+    const sigSummary = buildSignatureSummary(criticalHex);
+    const firstMatch = criticalHex[0];
+
+    return {
+      detected: false,
+      signature: sigSummary,
+      hexMatches: hexResult.matches,
+      deepAnalysis,
+      provider: createProviderResult({
+        id: 'local-heuristic',
+        name: 'Local Heuristic',
+        verdict: 'REVIEW',
+        message: `Local heuristic found a critical byte pattern (${firstMatch.name}) at ${firstMatch.offsetHex}. This requires review or external confirmation before marking the file infected.`,
+        metadata: {
+          sha256: fileHash,
+          signature: sigSummary,
+          detectionMethod: 'hex-critical-review',
+          hexMatches: hexResult.matches,
+          heuristicScore: heuristicScore.score,
+        },
+      }),
+    };
+  }
+
   // Semnături de avertisment (warning) — verdict REVIEW, nu INFECTED
-  if (warningHex.length > 0 || heuristicScore.score >= 40) {
-    const sigSummary = buildSignatureSummary(hexResult.matches);
-    const scoreNote = heuristicScore.score >= 40
+  if (warningHex.length > 0 || heuristicScore.score >= 55) {
+    const sigSummary = warningHex.length > 0 ? buildSignatureSummary(warningHex) : null;
+    const scoreNote = heuristicScore.score >= 55
       ? ` Heuristic score: ${heuristicScore.score}/100 (${heuristicScore.verdict}).`
       : '';
 
@@ -392,7 +433,7 @@ function createLocalHeuristicResult(file, fileHash) {
         id: 'local-heuristic',
         name: 'Local Heuristic',
         verdict: 'REVIEW',
-        message: `Suspicious binary pattern detected: ${warningHex.map((m) => m.name).join(', ') || 'deep analysis flags'}.${scoreNote} Manual review recommended.`,
+        message: `Local heuristic found review signals: ${warningHex.map((m) => m.name).join(', ') || 'deep analysis flags'}.${scoreNote} External confirmation is recommended before quarantine.`,
         metadata: {
           sha256: fileHash,
           signature: sigSummary,
@@ -584,11 +625,14 @@ async function submitSandboxJob(file, fileHash, publicSubmission) {
 
     return updateAnalysisJob(queuedJob.id, {
       status: 'running',
-      externalId: submission.id,
+      externalId: submission.reportRef || submission.id,
       reportUrl: submission.reportUrl,
       message: 'Sample submitted to Falcon Sandbox. Poll the report endpoint for updates.',
       metadata: {
         submission: submission.raw,
+        jobId: submission.jobId,
+        sha256: submission.sha256,
+        submissionId: submission.submissionId,
       },
     }, {
       source: 'Hybrid Analysis',
@@ -730,7 +774,7 @@ async function collectHybridAnalysisSignals(file, fileHash, providerSelection, p
       } else {
         response.quickScan = await hybridAnalysisClient.quickScanFile(file, {
           environmentId: hybridAnalysisConfig.environmentId,
-          waitForCompletion: false,
+          waitForCompletion: true,
         });
       }
 
@@ -1031,7 +1075,10 @@ router.post('/analysis/:jobId/poll', async (req, res) => {
   }
 
   try {
-    const report = await hybridAnalysisClient.getReportOverview(existingJob.externalId);
+    const report = await hybridAnalysisClient.getReportOverview(existingJob.externalId, {
+      environmentId: existingJob.environmentId,
+      sha256: existingJob.sha256,
+    });
     const nextStatus = report?.status || existingJob.status;
     const nextVerdict = report?.verdict || existingJob.verdict || null;
     const severity = nextVerdict === 'INFECTED' ? 'critical' : nextStatus === 'failed' ? 'warning' : 'info';
@@ -1135,11 +1182,14 @@ router.post('/submit-url', async (req, res) => {
 
     const updatedJob = updateAnalysisJob(queuedJob.id, {
       status: 'running',
-      externalId: submission.id,
+      externalId: submission.reportRef || submission.id,
       reportUrl: submission.reportUrl,
       message: 'URL submitted to Falcon Sandbox. Poll for the completed report.',
       metadata: {
         submission: submission.raw,
+        jobId: submission.jobId,
+        sha256: submission.sha256,
+        submissionId: submission.submissionId,
       },
     }, {
       source: 'Hybrid Analysis',

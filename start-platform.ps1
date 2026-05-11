@@ -217,10 +217,50 @@ function Stop-PortListeners {
   }
 }
 
+function Stop-ServiceWindows {
+  $serviceRoots = @($backendDir, $frontendDir)
+  $serviceProcesses = Get-CimInstance Win32_Process -Filter "name = 'powershell.exe'" |
+    Where-Object {
+      $commandLine = $_.CommandLine
+      if (-not $commandLine) {
+        return $false
+      }
+
+      $isProjectService = $false
+      foreach ($root in $serviceRoots) {
+        if ($commandLine -like "*$root*") {
+          $isProjectService = $true
+          break
+        }
+      }
+
+      $isProjectService -and $commandLine -match 'node\s+server\.js|npm\.cmd\s+run\s+dev'
+    }
+
+  foreach ($process in $serviceProcesses) {
+    if ($process.ProcessId -eq $PID) {
+      continue
+    }
+
+    if ($DryRun) {
+      Write-Host "[dry-run] Would stop service window PID $($process.ProcessId)"
+      continue
+    }
+
+    try {
+      Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+      Write-Host "Stopped service window PID $($process.ProcessId)"
+    } catch {
+      Write-Warning "Could not stop service window PID $($process.ProcessId): $($_.Exception.Message)"
+    }
+  }
+}
+
 function Install-Dependencies {
   param(
     [string]$ProjectDir,
-    [string]$Label
+    [string]$Label,
+    [string[]]$ExtraNpmArguments = @()
   )
 
   $nodeModules = Join-Path $ProjectDir 'node_modules'
@@ -233,16 +273,18 @@ function Install-Dependencies {
   }
 
   $installCommand = if (Test-Path -LiteralPath $lockFile) { 'ci' } else { 'install' }
-  Write-Host "Installing $Label dependencies with npm $installCommand..."
+  $npmArguments = @($installCommand) + $ExtraNpmArguments
+  $npmDisplay = $npmArguments -join ' '
+  Write-Host "Installing $Label dependencies with npm $npmDisplay..."
 
   if ($DryRun) {
-    Write-Host "[dry-run] Would run npm.cmd $installCommand in $ProjectDir"
+    Write-Host "[dry-run] Would run npm.cmd $npmDisplay in $ProjectDir"
     return
   }
 
   Push-Location $ProjectDir
   try {
-    Invoke-ExternalCommand -FilePath 'npm.cmd' -Arguments @($installCommand) -Description "$Label dependency installation"
+    Invoke-ExternalCommand -FilePath 'npm.cmd' -Arguments $npmArguments -Description "$Label dependency installation"
   } finally {
     Pop-Location
   }
@@ -286,10 +328,11 @@ Write-Step -Message "Preparing local stack from $repoRoot"
 Install-NodeJs
 Ensure-BackendEnv
 Stop-PortListeners -Ports @(5000, 5173)
+Stop-ServiceWindows
 
 Write-Step -Message 'Installing project dependencies'
 Install-Dependencies -ProjectDir $backendDir -Label 'Backend'
-Install-Dependencies -ProjectDir $frontendDir -Label 'Frontend'
+Install-Dependencies -ProjectDir $frontendDir -Label 'Frontend' -ExtraNpmArguments @('--legacy-peer-deps')
 
 Write-Step -Message 'Starting backend and frontend'
 $backendProcess = Start-ServiceWindow -Label 'Backend' -WorkingDir $backendDir -Command 'node server.js'

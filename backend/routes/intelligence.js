@@ -162,14 +162,26 @@ router.post('/analyze/deep', upload.single('file'), (req, res) => {
     entropyResult,
     evasionResult,
     injectionResult,
+    peResult,
   });
+
+  const isPortableExecutable = Boolean(peResult?.isValidPE);
+  const supplementalScore = Math.min(
+    (iocs.suspicionScore || 0)
+    + (decodeStrings(buf).riskContribution || 0)
+    + (scriptResult.riskContribution || 0),
+    isPortableExecutable ? 25 : 40,
+  );
+  const yaraScore = Math.min(
+    yaraResult.matched.filter((m) => m.severity === 'critical').length * 35
+    + yaraResult.matched.filter((m) => m.severity === 'warning').length * 10,
+    isPortableExecutable ? 45 : 60,
+  );
 
   const totalScore = Math.min(
     heuristicScore.score
-    + (iocs.suspicionScore || 0)
-    + (decodeStrings(buf).riskContribution || 0)
-    + (scriptResult.riskContribution || 0)
-    + (yaraResult.matched.filter((m) => m.severity === 'critical').length * 25),
+    + supplementalScore
+    + yaraScore,
     100,
   );
 
@@ -211,7 +223,8 @@ router.post('/analyze/eml', upload.single('file'), (req, res) => {
       const entropy = analyzeEntropy(att.buffer);
       const evasion = detectEvasion(att.buffer);
       const injection = detectSubbyteInjection(att.buffer);
-      const score = computeHeuristicScore({ hexMatches: hex.matches, entropyResult: entropy, evasionResult: evasion, injectionResult: injection });
+      const pe = parsePE(att.buffer);
+      const score = computeHeuristicScore({ hexMatches: hex.matches, entropyResult: entropy, evasionResult: evasion, injectionResult: injection, peResult: pe });
       return {
         filename: att.filename,
         contentType: att.contentType,

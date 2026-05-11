@@ -1372,13 +1372,15 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
                 <StatusBadge value={result.status} />
               </div>
 
-              <div className="provider-chip-row">
-                {(Array.isArray(result.providers) ? result.providers : []).map((provider) => (
-                  <span className="meta-chip" key={`${result.filename}-${provider.id}`}>
-                    {provider.name}: {provider.verdict || provider.status}
-                  </span>
-                ))}
-              </div>
+              <div className="analysis-result-body">
+                <div className="analysis-result-main">
+                  <div className="provider-chip-row">
+                    {(Array.isArray(result.providers) ? result.providers : []).map((provider) => (
+                      <span className="meta-chip" key={`${result.filename}-${provider.id}`}>
+                        {provider.name}: {provider.verdict || provider.status}
+                      </span>
+                    ))}
+                  </div>
 
               {Array.isArray(result.hexMatches) && result.hexMatches.length > 0 ? (
                 <div className="hex-match-row">
@@ -1470,6 +1472,8 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
                   </div>
                 </div>
               ) : null}
+                </div>
+              </div>
             </article>
           ))}
         </div>
