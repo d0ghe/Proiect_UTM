@@ -57,7 +57,7 @@ router.get('/security', async (_req, res) => {
     };
 
     const pdfBuffer = await buildSecurityReport(statusData);
-    const filename = `containment-atlas-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const filename = `u-trust-report-${new Date().toISOString().slice(0, 10)}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

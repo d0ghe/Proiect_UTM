@@ -78,7 +78,7 @@ export default function ContentFilterPage({
     <div className="page-content content-filter-page">
       <div className="page-header page-header--atlas">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / Policy Mesh</p>
+          <p className="page-breadcrumb">U-Trust / Policy Mesh</p>
           <h1 className="page-title">Content Filtering</h1>
           <p className="page-subtitle">
             Build a hosts-based containment policy for adult content, ads, malware, gambling, social media, and custom domains.
@@ -207,7 +207,7 @@ export default function ContentFilterPage({
         <div className="panel-card__header">
           <div>
             <p className="panel-kicker">Category Matrix</p>
-            <h3>Atlas Feeds</h3>
+              <h3>Threat Feeds</h3>
           </div>
         </div>
 

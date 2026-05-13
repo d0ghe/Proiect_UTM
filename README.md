@@ -1,12 +1,12 @@
-# Proiect_UTM
+# U-Trust
 
-Proiect_UTM is a local security platform with a dashboard for system telemetry, hosts-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
+U-Trust is a local security platform with a dashboard for system telemetry, hosts-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
 
 It is designed to give you a single place where you can monitor the machine, run scans, review recent security activity, and use external malware-analysis providers when they are configured.
 
 ## Highlights
 
-- live dashboard with CPU, RAM, GPU, network, and platform information
+- live dashboard with CPU, RAM, network, and platform information
 - hosts-based content filtering for adult content, ads, malware, gambling, piracy, social media, and bypass domains
 - protection workflow with local heuristic scanning, quarantine, recent results, and provider status
 - Hybrid Analysis quick scans and Falcon Sandbox submission support

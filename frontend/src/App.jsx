@@ -17,6 +17,8 @@ import {
 } from './IntelligencePages.jsx';
 
 const POLL_INTERVAL = 8000;
+const APP_NAME = 'U-Trust';
+const APP_TAGLINE = 'local trust control for endpoint defense';
 const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE_CANDIDATES = Array.from(new Set([
   import.meta.env.VITE_API_BASE_URL,
@@ -37,7 +39,7 @@ const NAV_ITEMS = [
   { id: 'events', label: 'Events', icon: 'terminal' },
   { id: 'geoblocking', label: 'Geo-Block', icon: 'globe2' },
   { id: 'memory', label: 'Memory Scan', icon: 'cpu' },
-  { id: 'intel', label: 'U-Trust', icon: 'shield-check' },
+  { id: 'intel', label: 'Threat Intel', icon: 'shield-check' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
 
@@ -379,7 +381,6 @@ function normalizeStatusPayload(payload) {
     uptime: pickFirst(payload?.uptime, payload?.uptime_human),
     cpu_percent: pickFirst(payload?.cpu_percent, toNumber(payload?.cpu?.load)),
     ram_percent: pickFirst(payload?.ram_percent, toNumber(payload?.ram?.percent)),
-    gpu_percent: pickFirst(payload?.gpu_percent, toNumber(payload?.gpu?.usagePercent)),
     ram_used_mb: pickFirst(payload?.ram_used_mb, payload?.ram?.used !== undefined ? Math.round(payload.ram.used * 1024) : undefined),
     rules_active: pickFirst(payload?.rules_active, payload?.firewall_rules_count),
     blocked_today: pickFirst(payload?.blocked_today, payload?.blocked_rules),
@@ -507,8 +508,8 @@ function Sidebar({ active, onNavigate }) {
           <i className="bi bi-bezier2" />
         </span>
         <div className="brand-copy">
-          <span className="brand-label">Containment Atlas</span>
-          <span className="brand-sub">policy cartography for local defense</span>
+          <span className="brand-label">{APP_NAME}</span>
+          <span className="brand-sub">{APP_TAGLINE}</span>
         </div>
       </div>
 
@@ -530,7 +531,7 @@ function Sidebar({ active, onNavigate }) {
       <div className="sidebar-footer">
         <div className="sidebar-device">
           <span className="device-dot" />
-          <span className="device-name">atlas-node-01</span>
+          <span className="device-name">utrust-node-01</span>
         </div>
       </div>
     </aside>
@@ -561,7 +562,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
       const blob = await response.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `containment-atlas-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `u-trust-report-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (err) {
@@ -574,8 +575,8 @@ function Dashboard({ data, onNavigate, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Overview"
-        title="Atlas Command Surface"
+        breadcrumb={`${APP_NAME} / Overview`}
+        title="U-Trust Command Center"
         subtitle="Runtime posture, active containment layers, provider findings, and machine health mapped into one operator workspace."
         action={(
           <>
@@ -603,7 +604,6 @@ function Dashboard({ data, onNavigate, onRefresh }) {
           value={formatPercent(data?.ram_percent)}
           meta={data?.ram_used_mb ? `${formatInteger(data.ram_used_mb)} MB used` : 'memory'}
         />
-        <StatCard accent="blue" label="GPU Usage" value={formatPercent(data?.gpu_percent, 'Unavailable')} />
       </div>
 
       <div className="module-grid">
@@ -614,7 +614,6 @@ function Dashboard({ data, onNavigate, onRefresh }) {
           <div className="telemetry-grid">
             <TelemetryCard label="CPU" value={formatPercent(data?.cpu_percent)} />
             <TelemetryCard label="RAM" value={formatPercent(data?.ram_percent)} />
-            <TelemetryCard label="GPU" value={formatPercent(data?.gpu_percent, 'Unavailable')} />
             <TelemetryCard label="RX Rate" value={formatRate(data?.rx_rate)} />
             <TelemetryCard label="TX Rate" value={formatRate(data?.tx_rate)} />
             <TelemetryCard label="Clients" value={formatInteger(data?.connected_clients)} />
@@ -836,9 +835,9 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Firewall"
+        breadcrumb={`${APP_NAME} / Firewall`}
         title="Firewall Rules"
-        subtitle="Definește reguli de blocare/permitere aplicate direct în Windows Firewall."
+        subtitle="Manage safe local policy rules without blocking normal web access on ports 80, 443, or DNS."
         action={(
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
         )}
@@ -886,7 +885,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
                 autoComplete="off"
                 className="field-input"
                 inputMode="numeric"
-                placeholder="ex: 80, 443, 8080"
+                placeholder="ex: 8080, 3389, 22"
                 type="text"
                 value={form.port}
                 onChange={(e) => setForm({ ...form, port: e.target.value.replace(/\D/g, '') })}
@@ -1211,7 +1210,7 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Protection"
+        breadcrumb={`${APP_NAME} / Protection`}
         title="Protection Console"
         subtitle="Run local and cloud scans, enrich results with Hybrid Analysis, and track Falcon Sandbox jobs without replacing the current protection flow."
         action={(
@@ -1240,12 +1239,26 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
           <form className="field-grid" onSubmit={handleScan}>
             <label className="field-group field-group--wide">
               <span className="field-label">Files</span>
-              <input
-                className="field-input"
-                multiple
-                onChange={(event) => setSelectedFiles(Array.from(event.target.files || []))}
-                type="file"
-              />
+              <span className="file-upload-box">
+                <input
+                  className="file-upload-input"
+                  multiple
+                  onChange={(event) => setSelectedFiles(Array.from(event.target.files || []))}
+                  type="file"
+                />
+                <span className="file-upload-box__icon">
+                  <i className="bi bi-upload" />
+                </span>
+                <span className="file-upload-box__text">
+                  {selectedFiles.length > 0 ? `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected` : 'Upload files'}
+                </span>
+              </span>
+              {selectedFiles.length > 0 ? (
+                <span className="file-upload-box__meta">
+                  {selectedFiles.slice(0, 3).map((file) => file.name).join(', ')}
+                  {selectedFiles.length > 3 ? ` +${selectedFiles.length - 3}` : ''}
+                </span>
+              ) : null}
             </label>
 
             <p className="page-note">
@@ -1595,9 +1608,9 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Telemetry"
+        breadcrumb={`${APP_NAME} / Telemetry`}
         title="Telemetry"
-        subtitle="Detailed host runtime, CPU, memory, GPU, and interface data from the backend telemetry layer."
+        subtitle="Detailed host runtime, CPU, memory, and interface data from the backend telemetry layer."
         action={(
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
             Refresh Telemetry
@@ -1609,7 +1622,6 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
         <StatCard accent="neutral" label="Platform" value={formatDisplay(telemetry.platform)} />
         <StatCard accent="blue" label="CPU Usage" value={formatPercent(telemetry.cpu_percent)} />
         <StatCard accent="blue" label="RAM Usage" value={formatPercent(telemetry.ram_percent)} />
-        <StatCard accent="blue" label="GPU Usage" value={formatPercent(telemetry.gpu_percent ?? telemetry.gpu?.usagePercent, 'Unavailable')} />
         <StatCard accent="neutral" label="Uptime" value={formatDisplay(telemetry.uptime, '0')} />
       </div>
 
@@ -1645,21 +1657,6 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
               <DataPair label="Used" value={formatGigabytes(telemetry.ram?.used)} />
               <DataPair label="Total" value={formatGigabytes(telemetry.ram?.total)} />
               <DataPair label="Percent" value={formatPercent(telemetry.ram?.percent)} />
-            </div>
-          </section>
-
-          <section className="panel-card">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Graphics</p>
-                <h3>GPU Monitor</h3>
-              </div>
-            </div>
-            <div className="detail-grid">
-              <DataPair label="Model" value={formatDisplay(telemetry.gpu?.model, 'Unavailable')} />
-              <DataPair label="Usage" value={formatPercent(telemetry.gpu?.usagePercent, 'Unavailable')} />
-              <DataPair label="Adapters" value={formatInteger(telemetry.gpu?.controllers?.length)} />
-              <DataPair label="Source" value={formatDisplay(telemetry.gpu?.source, 'Unavailable')} />
             </div>
           </section>
 
@@ -1699,7 +1696,7 @@ function PlatformPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Platform"
+        breadcrumb={`${APP_NAME} / Platform`}
         title="Platform"
         subtitle="Operating system details, Windows version and build metadata, and a lightweight packet and port monitor."
         action={(
@@ -1810,16 +1807,16 @@ function PlatformPage({ data, error, loading, onRefresh }) {
   );
 }
 
-function CleanupPage({ actionLoading, data, error, lastResult, loading, message, onClearTempFiles, onOpenNative, onRefresh, platformInfo }) {
+function CleanupPage({ actionLoading, data, error, lastResult, loading, message, onOpenNative, onRefresh, platformInfo }) {
   const nativeAction = data?.nativeAction || {};
   const tempTargets = Array.isArray(data?.tempTargets) ? data.tempTargets : [];
 
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Cleanup"
+        breadcrumb={`${APP_NAME} / Cleanup`}
         title="Cleanup"
-        subtitle="Use the native cleanup tool for this platform or clear temp files directly from the console."
+        subtitle="Use the native cleanup tool for this platform from the console."
         action={(
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
             Refresh Cleanup
@@ -1864,14 +1861,6 @@ function CleanupPage({ actionLoading, data, error, lastResult, loading, message,
                     type="button"
                   >
                     {actionLoading === 'native' ? 'Opening...' : nativeAction.label || 'Open Native Cleanup'}
-                  </button>
-                  <button
-                    className="control-btn control-btn--amber"
-                    disabled={actionLoading === 'temp'}
-                    onClick={onClearTempFiles}
-                    type="button"
-                  >
-                    {actionLoading === 'temp' ? 'Cleaning...' : 'Delete Temp Files'}
                   </button>
                 </div>
               </div>
@@ -1931,7 +1920,7 @@ function EventsPage({ data, error, loading, onRefresh }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Events"
+        breadcrumb={`${APP_NAME} / Events`}
         title="Events"
         subtitle="Protection, controls, and firewall activity collected into one operational stream."
         action={(
@@ -1980,7 +1969,7 @@ function ControlsPage({ data, error, loading, onRefresh, onToggle, savingKey }) 
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Controls"
+        breadcrumb={`${APP_NAME} / Controls`}
         title="Controls"
         subtitle="Toggle backend modules without leaving the console."
         action={(
@@ -2067,7 +2056,7 @@ function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset })
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Signal"
+        breadcrumb={`${APP_NAME} / Signal`}
         title="Signal &amp; Communications"
         subtitle="Monitorizare SNR în timp real, fallback automat LoRa/GSM și istoricul activității sistemului."
         action={(
@@ -2407,7 +2396,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb="Containment Atlas / Geo-Block"
+        breadcrumb={`${APP_NAME} / Geo-Block`}
         title="Geographic Blocking"
         subtitle="Block all outbound traffic associated with specific countries using community-maintained domain lists and IP geolocation."
         action={
@@ -2974,23 +2963,6 @@ export default function App() {
     }
   }, []);
 
-  const handleClearTempFiles = useCallback(async () => {
-    setCleanupData((current) => ({ ...current, actionLoading: 'temp', error: '', message: '' }));
-    try {
-      const payload = await requestJson('/cleanup/temp-files', { method: 'POST' });
-      setCleanupData((current) => ({
-        ...current,
-        actionLoading: '',
-        error: '',
-        message: payload?.message || 'Temp files removed.',
-        lastResult: payload?.result || null,
-      }));
-      await fetchDashboard();
-    } catch (error) {
-      setCleanupData((current) => ({ ...current, actionLoading: '', error: error.message || 'Could not clear temp files.' }));
-    }
-  }, [fetchDashboard]);
-
   const handleToggleControl = useCallback(async (key) => {
     const nextValue = !controlsData.controls?.[key];
     setControlsData((current) => ({ ...current, savingKey: key, error: '' }));
@@ -3264,7 +3236,6 @@ export default function App() {
             lastResult={cleanupData.lastResult}
             loading={cleanupData.loading}
             message={cleanupData.message}
-            onClearTempFiles={handleClearTempFiles}
             onOpenNative={handleOpenNativeCleanup}
             onRefresh={loadCleanup}
             platformInfo={telemetryData.data?.os || serverData?.os}

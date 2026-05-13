@@ -17,6 +17,24 @@ const firewallRules = [
     status: 'Active',
     desc: 'Allow HTTP traffic',
   },
+  {
+    id: 3,
+    action: 'ALLOW',
+    protocol: 'TCP',
+    port: 443,
+    ip: 'Any',
+    status: 'Active',
+    desc: 'Allow HTTPS traffic',
+  },
+  {
+    id: 4,
+    action: 'ALLOW',
+    protocol: 'UDP',
+    port: 53,
+    ip: 'Any',
+    status: 'Active',
+    desc: 'Allow DNS lookups',
+  },
 ];
 
 const controls = {

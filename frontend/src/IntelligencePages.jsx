@@ -92,7 +92,7 @@ export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / MITRE ATT&CK</p>
+          <p className="page-breadcrumb">U-Trust / MITRE ATT&CK</p>
           <h1 className="page-title">ATT&CK Navigator Heat-map</h1>
           <p className="page-subtitle">Tehnici detectate în ultimele 30 de zile, colorate după frecvență — stil ATT&CK Navigator.</p>
         </div>
@@ -205,7 +205,7 @@ export function MemoryScanPage({ data, loading, onScan }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / Memory</p>
+          <p className="page-breadcrumb">U-Trust / Memory</p>
           <h1 className="page-title">Live Process Memory Scanner</h1>
           <p className="page-subtitle">Analizează toate procesele active: căi suspecte, obfuscare în argumente, masquerade, parent-child chains anormale.</p>
         </div>
@@ -337,7 +337,7 @@ export function ThreatIntelPage({ intel, loading, onRefresh, onReset }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / Threat Intelligence</p>
+          <p className="page-breadcrumb">U-Trust / Threat Intelligence</p>
           <h1 className="page-title">Threat Intelligence Dashboard</h1>
           <p className="page-subtitle">Statistici globale agregate: top hash-uri, domenii, IP-uri, tehnici MITRE.</p>
         </div>
@@ -419,7 +419,7 @@ export function HoneypotsPage({ data, loading, onRefresh, onPlant, onRemove, onC
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / Honeypots</p>
+          <p className="page-breadcrumb">U-Trust / Honeypots</p>
           <h1 className="page-title">Honeypot Canary Files</h1>
           <p className="page-subtitle">Fișiere "momeală" plantate pentru a detecta exfiltrare, ransomware, insider threat.</p>
         </div>
@@ -526,7 +526,7 @@ rule Embedded_PE {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">Containment Atlas / Custom Rules</p>
+          <p className="page-breadcrumb">U-Trust / Custom Rules</p>
           <h1 className="page-title">YARA-style Rule Editor</h1>
           <p className="page-subtitle">Definește detecții custom: ASCII strings, hex patterns, regex, cu condiții logice.</p>
         </div>

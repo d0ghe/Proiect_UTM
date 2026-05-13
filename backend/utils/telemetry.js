@@ -909,7 +909,7 @@ async function readOperatingSystemDetails(osInfo) {
 }
 
 async function collectTelemetry() {
-  const [load, memory, osInfo, cpuInfo, network, users, temperature, gpu, connectionData] = await Promise.all([
+  const [load, memory, osInfo, cpuInfo, network, users, temperature, connectionData] = await Promise.all([
     si.currentLoad().catch(() => ({ currentLoad: null })),
     si.mem().catch(() => ({ total: 0, active: 0, used: 0 })),
     si.osInfo().catch(() => ({ hostname: os.hostname(), platform: os.platform(), distro: '' })),
@@ -917,7 +917,6 @@ async function collectTelemetry() {
     readPreferredNetworkSample(),
     si.users().catch(() => []),
     readTemperature(),
-    readGpu(),
     readConnections(),
   ]);
 
@@ -939,13 +938,6 @@ async function collectTelemetry() {
       cores: cpuInfo.cores || os.cpus().length,
       physicalCores: cpuInfo.physicalCores || cpuInfo.cores || os.cpus().length,
       load: round(load.currentLoad) ?? 0,
-    },
-    gpu: {
-      available: gpu.available,
-      model: gpu.model,
-      usagePercent: gpu.usagePercent,
-      source: gpu.source,
-      controllers: gpu.controllers,
     },
     ram: {
       total: round(totalMemory / (1024 ** 3), 1) ?? 0,

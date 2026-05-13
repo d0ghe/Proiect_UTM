@@ -45,8 +45,50 @@ const MALWARE_BAZAAR_KEY = process.env.MALWARE_BAZAAR_KEY;
 const LOG_FILE = path.join(__dirname, '../scans.log');
 const QUARANTINE_DIR = path.join(__dirname, '../quarantine');
 const EICAR_MARKER = ['EICAR', 'STANDARD', 'ANTIVIRUS', 'TEST', 'FILE'].join('-');
+const SCRIPT_LIKE_EXTENSIONS = new Set([
+  '.bat',
+  '.cmd',
+  '.hta',
+  '.js',
+  '.jse',
+  '.ps1',
+  '.psm1',
+  '.sh',
+  '.vbe',
+  '.vbs',
+  '.wsf',
+  '.wsh',
+]);
+const PE_CONTEXTUAL_YARA_RULES = new Set([
+  'Credential_Theft',
+  'Keylogger_Indicators',
+  'Shellcode_Loader',
+]);
 
 router.use(verifyToken);
+
+function isScriptLikeFilename(filename) {
+  return SCRIPT_LIKE_EXTENSIONS.has(path.extname(String(filename || '')).toLowerCase());
+}
+
+function splitCriticalYaraMatches(matches, isPortableExecutable) {
+  const critical = Array.isArray(matches) ? matches.filter((m) => m.severity === 'critical') : [];
+  if (!isPortableExecutable) {
+    return {
+      confirmed: critical,
+      contextual: [],
+    };
+  }
+
+  return critical.reduce((groups, match) => {
+    if (PE_CONTEXTUAL_YARA_RULES.has(match.name)) {
+      groups.contextual.push(match);
+    } else {
+      groups.confirmed.push(match);
+    }
+    return groups;
+  }, { confirmed: [], contextual: [] });
+}
 
 function ensureQuarantineDir() {
   if (!fs.existsSync(QUARANTINE_DIR)) {
@@ -294,18 +336,23 @@ function createLocalHeuristicResult(file, fileHash) {
 
   // YARA rule matching — runs across entire buffer
   const yaraResult    = runRules(file.buffer, getRulesText());
-  const yaraCritical  = yaraResult.matched.filter((m) => m.severity === 'critical');
   const yaraWarning   = yaraResult.matched.filter((m) => m.severity === 'warning');
   const isPortableExecutable = Boolean(peResult?.isValidPE);
+  const yaraCriticalGroups = splitCriticalYaraMatches(yaraResult.matched, isPortableExecutable);
+  const scriptRiskContribution = isPortableExecutable && !isScriptLikeFilename(file.originalname)
+    ? 0
+    : (scriptResult.riskContribution || 0);
   const yaraScore = Math.min(
-    yaraCritical.length * 35 + yaraWarning.length * 10,
-    isPortableExecutable ? 45 : 60,
+    yaraCriticalGroups.confirmed.length * 35
+    + yaraCriticalGroups.contextual.length * (isPortableExecutable ? 12 : 35)
+    + yaraWarning.length * (isPortableExecutable ? 6 : 10),
+    isPortableExecutable ? 30 : 60,
   );
   const supplementalScore = Math.min(
     (iocs.suspicionScore || 0)
     + (stringDecoded.riskContribution || 0)
-    + (scriptResult.riskContribution || 0),
-    isPortableExecutable ? 25 : 40,
+    + scriptRiskContribution,
+    isPortableExecutable ? 18 : 40,
   );
 
   // Boost score cu IOC + script + decoded + YARA
@@ -342,9 +389,9 @@ function createLocalHeuristicResult(file, fileHash) {
     mitreTechniques,
   };
 
-  // YARA critical match → immediate INFECTED verdict
-  if (yaraCritical.length > 0) {
-    const ruleNames = yaraCritical.map((m) => m.name).join(', ');
+  // YARA critical matches with specific malware indicators are authoritative.
+  if (yaraCriticalGroups.confirmed.length > 0) {
+    const ruleNames = yaraCriticalGroups.confirmed.map((m) => m.name).join(', ');
     return {
       detected: true,
       signature: `YARA: ${ruleNames}`,
@@ -354,12 +401,12 @@ function createLocalHeuristicResult(file, fileHash) {
         id: 'local-heuristic',
         name: 'Local Heuristic',
         verdict: 'INFECTED',
-        message: `YARA rule match: ${ruleNames}. Matched strings: ${yaraCritical.flatMap((m) => m.matchedStrings).join(', ')}.`,
+        message: `YARA rule match: ${ruleNames}. Matched strings: ${yaraCriticalGroups.confirmed.flatMap((m) => m.matchedStrings).join(', ')}.`,
         metadata: {
           sha256: fileHash,
           signature: `YARA: ${ruleNames}`,
           detectionMethod: 'yara-critical',
-          yaraMatches: yaraCritical,
+          yaraMatches: yaraCriticalGroups.confirmed,
           heuristicScore: heuristicScore.score,
         },
       }),

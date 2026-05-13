@@ -11,6 +11,8 @@ const {
 const router = express.Router();
 router.use(verifyToken);
 
+const PROTECTED_WEB_PORTS = new Set([53, 80, 443]);
+
 router.get('/rules', (_req, res) => {
   res.json(getFirewallRules());
 });
@@ -34,6 +36,13 @@ router.post('/rules', (req, res) => {
   const portNum = Number(port);
   if (!port || !Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
     return res.status(400).json({ success: false, message: 'Port invalid (1–65535).' });
+  }
+
+  if (String(action || '').toUpperCase() === 'BLOCK' && PROTECTED_WEB_PORTS.has(portNum)) {
+    return res.status(400).json({
+      success: false,
+      message: `Port ${portNum} is protected so normal web/DNS connectivity stays available. Use ALLOW for this port or block a narrower app/domain policy instead.`,
+    });
   }
 
   const rule = addFirewallRule({ action, protocol, port: portNum, ip, status, desc });

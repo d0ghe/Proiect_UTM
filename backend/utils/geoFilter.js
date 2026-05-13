@@ -125,7 +125,7 @@ function fetchWithTimeout(url, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, {
     signal: controller.signal,
-    headers: { 'User-Agent': 'Sentinel-Core/1.0', Accept: 'text/plain' },
+    headers: { 'User-Agent': 'U-Trust-Core/1.0', Accept: 'text/plain' },
   }).finally(() => clearTimeout(timer));
 }
 

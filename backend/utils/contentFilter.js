@@ -25,8 +25,21 @@ function removeQuicBlock() {
 }
 
 const CACHE_DIR = path.join(__dirname, '../store/content-filter-cache');
-const HOSTS_SECTION_START = '# === Containment Atlas Content Filter Start ===';
-const HOSTS_SECTION_END = '# === Containment Atlas Content Filter End ===';
+const HOSTS_SECTION_START = '# === U-Trust Content Filter Start ===';
+const HOSTS_SECTION_END = '# === U-Trust Content Filter End ===';
+const LEGACY_HOSTS_SECTIONS = [
+  {
+    start: '# === Containment Atlas Content Filter Start ===',
+    end: '# === Containment Atlas Content Filter End ===',
+  },
+];
+const SAFETY_ALLOWLIST = [
+  'localhost',
+  'msftconnecttest.com',
+  'msftncsi.com',
+  'windowsupdate.com',
+  'update.microsoft.com',
+];
 const CATEGORY_LIBRARY = {
   adult: {
     id: 'adult',
@@ -246,7 +259,7 @@ async function fetchText(sourceUrl, timeoutMs = 30000) {
   const response = await fetch(sourceUrl, {
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
-      'User-Agent': 'Sentinel-Core/1.0',
+      'User-Agent': 'U-Trust-Core/1.0',
       Accept: 'text/plain',
     },
   });
@@ -313,7 +326,10 @@ async function loadCategoryDomains(categoryId, options = {}) {
 
 async function compilePolicy(policy, options = {}) {
   const enabledCategoryIds = CATEGORY_IDS.filter((id) => Boolean(policy?.categories?.[id]));
-  const allowlist = splitTextList(policy?.allowlist);
+  const allowlist = Array.from(new Set([
+    ...splitTextList(policy?.allowlist),
+    ...splitTextList(SAFETY_ALLOWLIST),
+  ]));
   const customBlocklist = splitTextList(policy?.customBlocklist);
   const sourceStatus = {};
   const categoryDomainCounts = CATEGORY_IDS.reduce((counts, id) => {
@@ -380,8 +396,13 @@ function escapeRegExp(value) {
 }
 
 function stripManagedSection(hostsText) {
-  const pattern = new RegExp(`${escapeRegExp(HOSTS_SECTION_START)}[\\s\\S]*?${escapeRegExp(HOSTS_SECTION_END)}\\r?\\n?`, 'g');
-  return String(hostsText || '').replace(pattern, '').trimEnd();
+  return [
+    { start: HOSTS_SECTION_START, end: HOSTS_SECTION_END },
+    ...LEGACY_HOSTS_SECTIONS,
+  ].reduce((nextHostsText, section) => {
+    const pattern = new RegExp(`${escapeRegExp(section.start)}[\\s\\S]*?${escapeRegExp(section.end)}\\r?\\n?`, 'g');
+    return nextHostsText.replace(pattern, '');
+  }, String(hostsText || '')).trimEnd();
 }
 
 function buildManagedSection(compiled) {
@@ -396,17 +417,24 @@ function buildManagedSection(compiled) {
 }
 
 function inspectManagedSection(hostsText) {
-  const startIndex = String(hostsText || '').indexOf(HOSTS_SECTION_START);
-  const endIndex = String(hostsText || '').indexOf(HOSTS_SECTION_END);
+  const text = String(hostsText || '');
+  const section = [
+    { start: HOSTS_SECTION_START, end: HOSTS_SECTION_END },
+    ...LEGACY_HOSTS_SECTIONS,
+  ].map((candidate) => ({
+    ...candidate,
+    startIndex: text.indexOf(candidate.start),
+    endIndex: text.indexOf(candidate.end),
+  })).find((candidate) => candidate.startIndex !== -1 && candidate.endIndex !== -1 && candidate.endIndex >= candidate.startIndex);
 
-  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+  if (!section) {
     return {
       present: false,
       entryCount: 0,
     };
   }
 
-  const sectionText = String(hostsText || '').slice(startIndex, endIndex);
+  const sectionText = text.slice(section.startIndex, section.endIndex);
   return {
     present: true,
     entryCount: sectionText.split(/\r?\n/).filter((line) => /^\s*0\.0\.0\.0\s+/.test(line)).length,

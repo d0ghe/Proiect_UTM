@@ -28,7 +28,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ success: true, message: 'Containment Atlas backend is online.' });
+  res.json({ success: true, message: 'U-Trust backend is online.' });
 });
 
 app.use('/api',                require('./routes/auth'));
@@ -169,7 +169,7 @@ async function disableChromeProxyIfOwned() {
 }
 
 server.listen(PORT, async () => {
-  console.log(`[+] Sentinel backend  →  http://localhost:${PORT}`);
+  console.log(`[+] U-Trust backend  ->  http://localhost:${PORT}`);
   console.log(`[+] WebSocket alerts  →  ws://localhost:${PORT}/ws/alerts`);
 
   if (BROWSER_PROXY_ENABLED) {

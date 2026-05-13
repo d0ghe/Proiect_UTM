@@ -18,6 +18,7 @@ const net  = require('net');
 const { URL } = require('url');
 
 const PROXY_PORT = 8877;
+const PROTECTED_WEB_PORTS = new Set([53, 80, 443]);
 let   proxyServer = null;
 
 /* ─── rule lookup ────────────────────────────────────────────────────────── */
@@ -29,6 +30,10 @@ function getRules() {
 
 function isPortBlocked(port) {
   const p = Number(port);
+  if (PROTECTED_WEB_PORTS.has(p)) {
+    return false;
+  }
+
   return getRules().some(
     (r) =>
       String(r.action).toUpperCase()  === 'BLOCK'  &&
@@ -70,7 +75,7 @@ const BLOCK_HTML = (reason, detail) => `<!DOCTYPE html>
   <h1>Connection Blocked</h1>
   <p>${reason}</p>
   <p><code>${detail}</code></p>
-  <p>Modify the rule in <strong>Containment Atlas</strong> to restore access.</p>
+  <p>Modify the rule in <strong>U-Trust</strong> to restore access.</p>
 </div></body></html>`;
 
 function sendBlockHtml(res, label, detail) {
