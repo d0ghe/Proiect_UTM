@@ -5,13 +5,21 @@ const {
   addFirewallRule,
   countActiveFirewallRules,
   deleteFirewallRule,
+  getFirewallRule,
   getFirewallRules,
+  updateFirewallRule,
 } = require('../store/runtimeState');
+const {
+  PROTECTED_WEB_PORTS,
+  applyFirewallRuleToOs,
+  inspectFirewallEnvironment,
+  relaunchBackendAsAdmin,
+  removeFirewallRuleFromOs,
+  validateFirewallRule,
+} = require('../utils/firewallManager');
 
 const router = express.Router();
 router.use(verifyToken);
-
-const PROTECTED_WEB_PORTS = new Set([53, 80, 443]);
 
 router.get('/rules', (_req, res) => {
   res.json(getFirewallRules());
@@ -26,6 +34,8 @@ router.get('/summary', (_req, res) => {
       active:       countActiveFirewallRules(),
       blockedRules: rules.filter((r) => String(r.status).toLowerCase() === 'active' && String(r.action).toUpperCase() === 'BLOCK').length,
       allowedRules: rules.filter((r) => String(r.status).toLowerCase() === 'active' && String(r.action).toUpperCase() === 'ALLOW').length,
+      osApplied:    rules.filter((r) => Boolean(r.osApplied)).length,
+      osFirewall:   inspectFirewallEnvironment(),
     },
   });
 });
@@ -45,9 +55,46 @@ router.post('/rules', (req, res) => {
     });
   }
 
+  const validation = validateFirewallRule({ action, protocol, port: portNum, ip });
+  if (!validation.valid) {
+    return res.status(400).json({ success: false, message: validation.message });
+  }
+
   const rule = addFirewallRule({ action, protocol, port: portNum, ip, status, desc });
-  // Proxy-ul HTTP citește live din store — regula e activă imediat după adăugare
-  res.status(201).json({ success: true, message: 'Regulă adăugată.', rule });
+  const osFirewall = String(rule.status).toLowerCase() === 'active'
+    ? applyFirewallRuleToOs(rule)
+    : { success: true, applied: false, message: 'Rule saved as inactive; OS firewall was not changed.' };
+  const nextRule = updateFirewallRule(rule.id, {
+    osApplied: Boolean(osFirewall.applied),
+    osMessage: osFirewall.message,
+  }) || rule;
+
+  res.status(201).json({
+    success: true,
+    message: osFirewall.applied
+      ? 'Regula a fost adaugata si aplicata in firewall-ul OS.'
+      : 'Regula a fost salvata in aplicatie. Pentru aplicare OS, ruleaza backend-ul ca Administrator.',
+    osFirewall,
+    rule: nextRule,
+  });
+});
+
+router.post('/relaunch-admin', (_req, res) => {
+  const result = relaunchBackendAsAdmin();
+  if (!result.success) {
+    return res.status(500).json({
+      success: false,
+      message: result.message,
+      result,
+    });
+  }
+
+  res.json({
+    success: true,
+    message: result.message,
+    result,
+  });
+
 });
 
 router.delete('/rules/:id', (req, res) => {
@@ -56,12 +103,27 @@ router.delete('/rules/:id', (req, res) => {
     return res.status(400).json({ success: false, message: 'ID invalid.' });
   }
 
-  const removedRule = deleteFirewallRule(id);
-  if (!removedRule) {
+  const existingRule = getFirewallRule(id);
+  if (!existingRule) {
     return res.status(404).json({ success: false, message: `Regula ${id} nu există.` });
   }
 
-  res.json({ success: true, message: `Regula portului ${removedRule.port} ștearsă.`, rule: removedRule });
+  let osFirewall = { success: true, applied: false, message: 'No OS firewall rule was recorded for this entry.' };
+  if (existingRule.osApplied) {
+    osFirewall = removeFirewallRuleFromOs(existingRule.id);
+    if (!osFirewall.success) {
+      return res.status(500).json({
+        success: false,
+        message: osFirewall.message,
+        osFirewall,
+        rule: existingRule,
+      });
+    }
+  }
+
+  const removedRule = deleteFirewallRule(id);
+
+  res.json({ success: true, message: `Regula portului ${removedRule.port} ștearsă.`, osFirewall, rule: removedRule });
 });
 
 module.exports = router;

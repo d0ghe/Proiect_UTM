@@ -59,6 +59,10 @@ function buildApplyRuntimeMessage(result) {
   }
 
   if ((result.domains?.length || 0) > 0) {
+    if (result.hostsSkippedReason) {
+      return `${result.hostsSkippedReason} Nu am scris lista in hosts ca sa nu incetinim browsing-ul.`;
+    }
+
     return 'Blocarea nu a fost aplicata: ruleaza backend-ul ca Administrator pentru hosts file. Proxy-ul browser este dezactivat.';
   }
 
@@ -71,6 +75,10 @@ function buildApplyResponseMessage(result) {
   }
 
   if ((result.domains?.length || 0) > 0) {
+    if (result.hostsSkippedReason) {
+      return 'Lista este prea mare pentru hosts pe Windows. Am eliminat intrarile vechi ca sa ramana browsing-ul rapid.';
+    }
+
     return 'Blocarea nu a fost aplicata. Ruleaza backend-ul ca Administrator pentru hosts file sau activeaza explicit proxy-ul optional.';
   }
 
@@ -124,7 +132,7 @@ router.post('/apply', async (req, res) => {
     // Auto-activează policy dacă sunt categorii selectate
     const hasCategories = patch.categories && Object.values(patch.categories).some(Boolean);
     const hasCustom = patch.customBlocklist && patch.customBlocklist.length > 0;
-    if (hasCategories || hasCustom) {
+    if (patch.enabled === undefined && (hasCategories || hasCustom)) {
       patch.enabled = true;
     }
 
@@ -139,6 +147,12 @@ router.post('/apply', async (req, res) => {
       applied: Boolean(result.applied),
       appliedDomainCount: result.appliedDomainCount,
       categoryDomainCounts: result.categoryDomainCounts,
+      enforcementMode: result.enforcementMode,
+      hostsApplied: result.hostsApplied,
+      hostsMaxDomains: result.hostsMaxDomains,
+      hostsSkippedReason: result.hostsSkippedReason,
+      proxyEnabled: result.proxyEnabled,
+      quicBlocked: result.quicBlocked,
       sourceStatus: result.sourceStatus,
       lastSyncedAt: result.lastSyncedAt,
       lastApplyAt: result.lastApplyAt,
@@ -169,6 +183,11 @@ router.post('/remove', (_req, res) => {
     updateContentFilterRuntime({
       applied: false,
       appliedDomainCount: 0,
+      enforcementMode: 'none',
+      hostsApplied: false,
+      hostsSkippedReason: '',
+      proxyEnabled: false,
+      quicBlocked: false,
       lastRemoveAt: result.lastRemoveAt,
       dnsFlushMessage: result.dnsFlushMessage,
       lastError: '',

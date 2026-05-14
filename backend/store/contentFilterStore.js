@@ -35,6 +35,12 @@ function createDefaultStore() {
       lastError: '',
       sourceStatus: {},
       dnsFlushMessage: '',
+      enforcementMode: 'none',
+      hostsApplied: false,
+      hostsMaxDomains: 5000,
+      hostsSkippedReason: '',
+      proxyEnabled: false,
+      quicBlocked: false,
     },
   };
 }

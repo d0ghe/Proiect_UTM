@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * Intelligence Pages — pagini noi pentru:
  *  - MITRE ATT&CK Matrix
@@ -8,7 +9,7 @@
  *  - Entropy Heatmap canvas
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const PANEL_HEADER = (kicker, title) => (
   <div className="panel-card__header">
@@ -412,7 +413,7 @@ export function ThreatIntelPage({ intel, loading, onRefresh, onReset }) {
 }
 
 // ─── Honeypots Page ─────────────────────────────────────────────────────────
-export function HoneypotsPage({ data, loading, onRefresh, onPlant, onRemove, onCheck }) {
+export function HoneypotsPage({ data, onRefresh, onPlant, onRemove, onCheck }) {
   const [targetDir, setTargetDir] = useState('');
 
   return (
@@ -479,7 +480,9 @@ export function RulesPage({ rulesText, onSave, onTest }) {
   const [testResult, setTestResult] = useState(null);
   const [saveMsg, setSaveMsg] = useState('');
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => { setText(rulesText || ''); }, [rulesText]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSave = async () => {
     setSaveMsg('Saving...');

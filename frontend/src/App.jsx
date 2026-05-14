@@ -788,12 +788,15 @@ function OsBanner({ msg, ok }) {
   );
 }
 
-function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rules, summary }) {
+function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, onRunBackendAsAdmin, rules, summary }) {
   const [form, setForm] = useState({ action: 'BLOCK', protocol: 'TCP', port: '', ip: 'Any', status: 'Active', desc: '' });
   const [submitError, setSubmitError]   = useState('');
   const [osStatus,    setOsStatus]      = useState(null);   // { ok, msg }
   const [deletingId,  setDeletingId]    = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [adminRestarting, setAdminRestarting] = useState(false);
+  const osFirewall = summary?.osFirewall || {};
+  const showAdminButton = Boolean(osFirewall.supported && osFirewall.enforcementEnabled && !osFirewall.canApply);
 
   // Load rules as soon as this component mounts (handles server-restart case)
   useEffect(() => { onRefresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -832,6 +835,20 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
     }
   }
 
+  async function handleRunBackendAsAdmin() {
+    setSubmitError('');
+    setOsStatus(null);
+    setAdminRestarting(true);
+
+    try {
+      const result = await onRunBackendAsAdmin();
+      setOsStatus({ ok: true, msg: result?.message || 'Backend-ul se reporneste ca Administrator.' });
+    } catch (e) {
+      setOsStatus({ ok: false, msg: e.message || 'Nu am putut porni backend-ul ca Administrator.' });
+      setAdminRestarting(false);
+    }
+  }
+
   return (
     <div className="page-content">
       <PageHeader
@@ -849,7 +866,19 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
         <StatCard accent="blue"    label="Active"       value={formatInteger(summary?.active)} />
         <StatCard accent="red"     label="Block"        value={formatInteger(summary?.blockedRules)} />
         <StatCard accent="green"   label="Allow"        value={formatInteger(summary?.allowedRules)} />
+        <StatCard accent="amber"   label="OS Applied"   value={formatInteger(summary?.osApplied)} />
       </div>
+
+      {osFirewall.message ? (
+        <div className={`form-message ${osFirewall.canApply ? 'form-message--success' : 'form-message--error'}`} style={{ alignItems: 'center', display: 'flex', gap: '0.75rem', justifyContent: 'space-between' }}>
+          <span>{osFirewall.message}</span>
+          {showAdminButton ? (
+            <button className="control-btn control-btn--primary" disabled={adminRestarting} onClick={handleRunBackendAsAdmin} type="button">
+              {adminRestarting ? 'Se reporneste...' : 'Run as Administrator'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="panel-grid panel-grid--split">
         {/* ── Rule Composer ── */}
@@ -875,7 +904,6 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
               <select className="field-input" value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value })}>
                 <option value="TCP">TCP</option>
                 <option value="UDP">UDP</option>
-                <option value="ICMP">ICMP</option>
               </select>
             </label>
 
@@ -2213,7 +2241,7 @@ const COUNTRY_COORDS_UI = {
   HK:[114.2,22.4], TW:[120.9,23.7], US:[-95.7,37.1], GB:[-3.4,55.4],
   DE:[10.5,51.2],  FR:[2.2,46.2],   NL:[5.3,52.3],   RO:[25.0,45.9],
   PL:[19.1,51.9],  KZ:[67.0,48.0],  UZ:[63.9,41.4],  AZ:[47.6,40.1],
-  GE:[43.4,42.3],  NG:[8.7,9.1],    LY:[17.2,26.3],
+  GE:[43.4,42.3],
 };
 
 const COUNTRY_LIST = [
@@ -2244,13 +2272,14 @@ const GEO_COLOR     = '#f5a623';
 const CONTENT_COLOR = '#ff453a';
 
 function AttackMap({ attacks }) {
-  const [, rerender] = useState(0);
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => rerender((n) => n + 1), 1500);
+    const updateNow = () => setNow(Date.now());
+    updateNow();
+    const id = setInterval(updateNow, 1500);
     return () => clearInterval(id);
   }, []);
 
-  const now = Date.now();
   const FADE_MS = 22000;
   const visible = attacks
     .filter((a) => COUNTRY_COORDS_UI[a.country] && now - a.timestamp < FADE_MS)
@@ -2578,7 +2607,7 @@ export default function App() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${host}/ws/alerts`;
   })();
-  const { alerts: liveAlerts, connected: wsConnected } = useLiveAlerts(wsUrl);
+  const { alerts: liveAlerts } = useLiveAlerts(wsUrl);
   const [controlsData, setControlsData] = useState({ controls: null, loading: false, savingKey: '', error: '' });
   const [signalData, setSignalData] = useState({ data: null, loading: false, error: '' });
   const [contentFilterData, setContentFilterData] = useState({
@@ -2809,14 +2838,14 @@ export default function App() {
     try {
       await requestJson('/signal/inject-noise', { method: 'POST' });
       await loadSignal();
-    } catch {}
+    } catch { /* ignore */ }
   }, [loadSignal]);
 
   const handleResetSignal = useCallback(async () => {
     try {
       await requestJson('/signal/reset', { method: 'POST' });
       await loadSignal();
-    } catch {}
+    } catch { /* ignore */ }
   }, [loadSignal]);
 
   const loadContentFilter = useCallback(async () => {
@@ -2846,6 +2875,10 @@ export default function App() {
     await requestJson(`/firewall/rules/${ruleId}`, { method: 'DELETE' });
     await Promise.all([loadFirewall(), fetchDashboard(), loadEvents()]);
   }, [fetchDashboard, loadEvents, loadFirewall]);
+
+  const handleRunBackendAsAdmin = useCallback(async () => {
+    return requestJson('/firewall/relaunch-admin', { method: 'POST' });
+  }, []);
 
   const handleScanFiles = useCallback(async (files, options = {}) => {
     setProtectionData((current) => ({ ...current, scanLoading: true, error: '' }));
@@ -3248,6 +3281,7 @@ export default function App() {
             onAddRule={handleAddFirewallRule}
             onDeleteRule={handleDeleteFirewallRule}
             onRefresh={loadFirewall}
+            onRunBackendAsAdmin={handleRunBackendAsAdmin}
             rules={firewallData.rules}
             summary={firewallData.summary}
           />

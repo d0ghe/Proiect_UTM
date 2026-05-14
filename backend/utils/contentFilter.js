@@ -33,6 +33,7 @@ const LEGACY_HOSTS_SECTIONS = [
     end: '# === Containment Atlas Content Filter End ===',
   },
 ];
+const DEFAULT_HOSTS_MAX_DOMAINS = 5000;
 const SAFETY_ALLOWLIST = [
   'localhost',
   'msftconnecttest.com',
@@ -40,55 +41,71 @@ const SAFETY_ALLOWLIST = [
   'windowsupdate.com',
   'update.microsoft.com',
 ];
+
+function hageziWildcardUrls(filename) {
+  return [
+    `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/${filename}`,
+    `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/${filename}`,
+  ];
+}
+
+function hageziSource(filename) {
+  const urls = hageziWildcardUrls(filename);
+  return {
+    sourceUrl: urls[0],
+    sourceUrls: urls,
+  };
+}
+
 const CATEGORY_LIBRARY = {
   adult: {
     id: 'adult',
     label: '18+ / Adult',
     description: 'Blocks adult and explicit domains.',
     sourceName: 'HaGeZi NSFW',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt',
+    ...hageziSource('nsfw-onlydomains.txt'),
   },
   ads: {
     id: 'ads',
     label: 'Ads & Trackers',
     description: 'Blocks ad networks, trackers and analytics domains (Google Ads, Yahoo Ads, AppNexus etc.).',
     sourceName: 'HaGeZi Pro Mini',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.mini-onlydomains.txt',
+    ...hageziSource('pro.mini-onlydomains.txt'),
   },
   malware: {
     id: 'malware',
     label: 'Malware & Phishing',
     description: 'Blocks malware, phishing, scam, and command-and-control domains.',
     sourceName: 'HaGeZi TIF',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif-onlydomains.txt',
+    ...hageziSource('tif-onlydomains.txt'),
   },
   gambling: {
     id: 'gambling',
     label: 'Gambling',
     description: 'Blocks gambling sites. Necesită admin (Run as Administrator) pentru blocare completă HTTPS.',
     sourceName: 'HaGeZi Gambling',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling-onlydomains.txt',
+    ...hageziSource('gambling-onlydomains.txt'),
   },
   social: {
     id: 'social',
     label: 'Social Media',
     description: 'Blocks Facebook, TikTok, Instagram etc. Necesită admin pentru blocare completă (QUIC/HTTP3).',
     sourceName: 'HaGeZi Social',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/social-onlydomains.txt',
+    ...hageziSource('social-onlydomains.txt'),
   },
   piracy: {
     id: 'piracy',
     label: 'Piracy',
     description: 'Blocks torrent sites and illicit streaming platforms.',
     sourceName: 'HaGeZi Anti Piracy',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/anti.piracy-onlydomains.txt',
+    ...hageziSource('anti.piracy-onlydomains.txt'),
   },
   bypass: {
     id: 'bypass',
     label: 'DNS Bypass',
     description: 'Blocks domains used to bypass DNS filtering (DoH providers, VPN, proxies).',
     sourceName: 'HaGeZi DoH/VPN/Proxy Bypass',
-    sourceUrl: 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/doh-vpn-proxy-bypass-onlydomains.txt',
+    ...hageziSource('doh-vpn-proxy-bypass-onlydomains.txt'),
   },
 };
 
@@ -122,6 +139,11 @@ function isBrowserProxyEnabled() {
 
 function isQuicBlockEnabled() {
   return parseBoolean(process.env.CONTENT_FILTER_BLOCK_QUIC, false);
+}
+
+function getHostsMaxDomains() {
+  const value = Number(process.env.CONTENT_FILTER_HOSTS_MAX_DOMAINS || DEFAULT_HOSTS_MAX_DOMAINS);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_HOSTS_MAX_DOMAINS;
 }
 
 function createContentFilterError(message, status = 400, code = 'CONTENT_FILTER_ERROR') {
@@ -196,6 +218,7 @@ function normalizeDomain(value) {
     .replace(/^@@\|\|/, '')
     .replace(/^\|\|/, '')
     .replace(/\^$/, '')
+    .replace(/^\*\./, '')
     .replace(/^https?:\/\//, '')
     .replace(/\/.*$/, '')
     .trim()
@@ -240,6 +263,32 @@ function parseDomainList(rawText) {
   ));
 }
 
+function looksLikeDownloadError(rawText) {
+  const sample = String(rawText || '').slice(0, 1000).toLowerCase();
+  return !sample.trim()
+    || sample.includes('too many requests')
+    || sample.includes('rate limit')
+    || sample.includes('github terms')
+    || sample.includes('<!doctype html')
+    || sample.includes('<html')
+    || sample.includes('404: not found')
+    || sample.includes('not found');
+}
+
+function parseValidatedCategoryDomains(rawText, sourceLabel = 'blocklist') {
+  const domains = parseDomainList(rawText);
+
+  if (looksLikeDownloadError(rawText) || domains.length < 10) {
+    throw createContentFilterError(
+      `Downloaded ${sourceLabel} feed does not look like a valid domain list.`,
+      502,
+      'BLOCKLIST_INVALID',
+    );
+  }
+
+  return domains;
+}
+
 function splitTextList(value) {
   if (Array.isArray(value)) {
     return value;
@@ -271,6 +320,34 @@ async function fetchText(sourceUrl, timeoutMs = 30000) {
   return response.text();
 }
 
+async function fetchValidatedCategory(source, timeoutMs = 30000) {
+  const urls = Array.isArray(source.sourceUrls) && source.sourceUrls.length > 0
+    ? source.sourceUrls
+    : [source.sourceUrl];
+  let lastError = null;
+
+  for (const sourceUrl of urls) {
+    try {
+      const raw = await fetchText(sourceUrl, timeoutMs);
+      const domains = parseValidatedCategoryDomains(raw, source.label);
+      return {
+        domains,
+        raw,
+        sourceUrl,
+      };
+    } catch (error) {
+      lastError = error;
+      console.warn(`[!] Content filter source failed (${source.label}): ${sourceUrl} - ${error.message}`);
+    }
+  }
+
+  throw lastError || createContentFilterError(
+    `No source URL is configured for ${source.label}.`,
+    502,
+    'BLOCKLIST_SOURCE_MISSING',
+  );
+}
+
 function readCachedCategory(categoryId) {
   const cachePath = getCachePath(categoryId);
   if (!fs.existsSync(cachePath)) {
@@ -292,32 +369,44 @@ async function loadCategoryDomains(categoryId, options = {}) {
 
   ensureCacheDir();
   const cached = readCachedCategory(categoryId);
-  let raw = cached?.raw || '';
-  let fromCache = Boolean(cached);
+  let domains = [];
+  let fromCache = false;
   let lastSyncedAt = cached?.lastSyncedAt || null;
   let fetchError = '';
+  let sourceUrl = source.sourceUrl;
+
+  if (cached?.raw) {
+    try {
+      domains = parseValidatedCategoryDomains(cached.raw, `${source.label} cache`);
+      fromCache = true;
+    } catch (error) {
+      fetchError = error.message;
+    }
+  }
 
   if (options.sync !== false) {
     try {
-      raw = await fetchText(source.sourceUrl, options.timeoutMs || 30000);
-      fs.writeFileSync(getCachePath(categoryId), raw);
+      const downloaded = await fetchValidatedCategory(source, options.timeoutMs || 30000);
+      domains = downloaded.domains;
+      fs.writeFileSync(getCachePath(categoryId), downloaded.raw);
       fromCache = false;
+      sourceUrl = downloaded.sourceUrl;
       lastSyncedAt = new Date().toISOString();
     } catch (error) {
-      fetchError = error.message;
-      if (!raw) {
+      fetchError = [fetchError, error.message].filter(Boolean).join(' | ');
+      if (!domains.length) {
         throw error;
       }
     }
-  } else if (!raw) {
+  } else if (!domains.length) {
     throw createContentFilterError(`No cached blocklist is available yet for ${source.label}.`, 400, 'BLOCKLIST_CACHE_MISSING');
   }
 
-  const domains = parseDomainList(raw);
   return {
     categoryId,
     domains,
     source,
+    sourceUrl,
     fromCache,
     lastSyncedAt,
     fetchError,
@@ -325,12 +414,15 @@ async function loadCategoryDomains(categoryId, options = {}) {
 }
 
 async function compilePolicy(policy, options = {}) {
-  const enabledCategoryIds = CATEGORY_IDS.filter((id) => Boolean(policy?.categories?.[id]));
+  const policyEnabled = Boolean(policy?.enabled);
+  const enabledCategoryIds = policyEnabled
+    ? CATEGORY_IDS.filter((id) => Boolean(policy?.categories?.[id]))
+    : [];
   const allowlist = Array.from(new Set([
     ...splitTextList(policy?.allowlist),
     ...splitTextList(SAFETY_ALLOWLIST),
   ]));
-  const customBlocklist = splitTextList(policy?.customBlocklist);
+  const customBlocklist = policyEnabled ? splitTextList(policy?.customBlocklist) : [];
   const sourceStatus = {};
   const categoryDomainCounts = CATEGORY_IDS.reduce((counts, id) => {
     counts[id] = 0;
@@ -352,7 +444,7 @@ async function compilePolicy(policy, options = {}) {
     sourceStatus[result.categoryId] = {
       label: result.source.label,
       sourceName: result.source.sourceName,
-      sourceUrl: result.source.sourceUrl,
+      sourceUrl: result.sourceUrl || result.source.sourceUrl,
       domainCount: result.domains.length,
       fromCache: result.fromCache,
       lastSyncedAt: result.lastSyncedAt,
@@ -412,7 +504,10 @@ function buildManagedSection(compiled) {
     `# Categories: ${(compiled.enabledCategoryIds.length > 0 ? compiled.enabledCategoryIds : ['custom']).join(', ')}`,
     `# Domains: ${compiled.domains.length}`,
   ];
-  const domainLines = compiled.domains.map((domain) => `0.0.0.0 ${domain}`);
+  const domainLines = compiled.domains.flatMap((domain) => [
+    `0.0.0.0 ${domain}`,
+    `:: ${domain}`,
+  ]);
   return [...summaryLines, ...domainLines, HOSTS_SECTION_END].join('\n');
 }
 
@@ -437,12 +532,66 @@ function inspectManagedSection(hostsText) {
   const sectionText = text.slice(section.startIndex, section.endIndex);
   return {
     present: true,
-    entryCount: sectionText.split(/\r?\n/).filter((line) => /^\s*0\.0\.0\.0\s+/.test(line)).length,
+    entryCount: sectionText.split(/\r?\n/).filter((line) => /^\s*(?:0\.0\.0\.0|::)\s+/.test(line)).length,
   };
 }
 
 function writeHostsFile(hostsPath, content) {
-  fs.writeFileSync(hostsPath, `${content.trimEnd()}\n`, 'utf8');
+  const nextContent = `${content.trimEnd()}\n`;
+  const tempPath = path.join(getTempDir(), `u-trust-hosts-${process.pid}-${Date.now()}.tmp`);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    try {
+      fs.writeFileSync(hostsPath, nextContent, 'utf8');
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) {
+        throw error;
+      }
+
+      if (process.platform === 'win32') {
+        try {
+          fs.writeFileSync(tempPath, nextContent, 'utf8');
+          const ps = [
+            `$source=${psSingleQuote(tempPath)};`,
+            `$dest=${psSingleQuote(hostsPath)};`,
+            '$bytes=[IO.File]::ReadAllBytes($source);',
+            '$stream=[IO.File]::Open($dest,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite);',
+            'try{$stream.SetLength(0);$stream.Write($bytes,0,$bytes.Length);$stream.Flush()}finally{$stream.Dispose()}',
+          ].join('');
+          const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8' });
+          if (result.status === 0) {
+            try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+            return;
+          }
+
+          lastError = new Error((result.stderr || result.stdout || '').trim() || error.message);
+          lastError.code = error.code;
+        } catch (fallbackError) {
+          lastError = fallbackError;
+        }
+      }
+
+      sleepSync(350);
+    }
+  }
+
+  try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch { /* ignore */ }
+  throw lastError;
+}
+
+function getTempDir() {
+  return process.env.TEMP || process.env.TMP || path.join(__dirname, '..', 'store');
+}
+
+function psSingleQuote(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function flushDnsCache() {
@@ -455,7 +604,7 @@ function flushDnsCache() {
         : [];
 
   for (const [command, args] of commands) {
-    const result = spawnSync(command, args, { encoding: 'utf8' });
+    const result = spawnSync(command, args, { encoding: 'utf8', timeout: 5000 });
     if (result.status === 0) {
       return `${command} ${args.join(' ')}`.trim();
     }
@@ -482,7 +631,8 @@ async function applyPolicy(policy, options = {}) {
 
   // Keep the legacy browser proxy fully opt-in. By default the app only writes
   // the hosts file and does not intercept browser traffic.
-  const hasContent = compiled.domains.length > 0;
+  const policyEnabled = Boolean(policy?.enabled);
+  const hasContent = policyEnabled && compiled.domains.length > 0;
   if (proxyEnabled && hasContent) {
     setBlockedDomains(compiled.domains);
   } else {
@@ -492,6 +642,8 @@ async function applyPolicy(policy, options = {}) {
   const environment = inspectEnvironment();
   let dnsFlushMessage = '';
   let hostsApplied = false;
+  const hostsMaxDomains = getHostsMaxDomains();
+  const tooLargeForHosts = hasContent && !proxyEnabled && compiled.domains.length > hostsMaxDomains;
 
   // Încearcă să scrie și în hosts file (funcționează dacă e admin)
   if (environment.supported && environment.canWrite) {
@@ -499,7 +651,7 @@ async function applyPolicy(policy, options = {}) {
     const currentHosts = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf8') : '';
     const strippedHosts = stripManagedSection(currentHosts);
 
-    if (!policy?.enabled || compiled.domains.length === 0) {
+    if (!policyEnabled || compiled.domains.length === 0 || tooLargeForHosts) {
       writeHostsFile(hostsPath, strippedHosts);
     } else {
       const managedSection = buildManagedSection(compiled);
@@ -508,6 +660,9 @@ async function applyPolicy(policy, options = {}) {
       hostsApplied = true;
     }
     dnsFlushMessage = flushDnsCache();
+    if (tooLargeForHosts) {
+      dnsFlushMessage = `Hosts enforcement skipped: ${compiled.domains.length} domains exceeds the safe Windows hosts limit (${hostsMaxDomains}). Existing managed entries were removed. ${dnsFlushMessage}`;
+    }
   } else if (proxyEnabled) {
     dnsFlushMessage = environment.canWrite === false
       ? 'Hosts file needs admin - browser proxy fallback is active.'
@@ -531,6 +686,10 @@ async function applyPolicy(policy, options = {}) {
     applied,
     enforcementMode,
     hostsApplied,
+    hostsMaxDomains,
+    hostsSkippedReason: tooLargeForHosts
+      ? `The policy has ${compiled.domains.length} domains, above the safe Windows hosts limit of ${hostsMaxDomains}.`
+      : '',
     proxyEnabled,
     quicBlocked: proxyApplied && isQuicBlockEnabled(),
     appliedDomainCount: applied ? compiled.domains.length : 0,
@@ -571,7 +730,10 @@ async function initBlockedDomains(policy) {
     return;
   }
 
-  if (!policy?.enabled) return;
+  if (!policy?.enabled) {
+    setBlockedDomains([]);
+    return;
+  }
   try {
     const compiled = await compilePolicy(policy, { sync: false });
     if (compiled.domains.length > 0) {
@@ -653,6 +815,8 @@ module.exports = {
   inspectEnvironment,
   removeManagedBlock,
   removeQuicBlock,
+  parseDomainList,
+  parseValidatedCategoryDomains,
   splitTextList,
   syncPolicy,
 };

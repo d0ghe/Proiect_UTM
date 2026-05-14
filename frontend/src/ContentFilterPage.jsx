@@ -43,12 +43,14 @@ export default function ContentFilterPage({
   const [allowlist, setAllowlist] = useState('');
   const [domainCheck, setDomainCheck] = useState('');
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setEnabled(Boolean(data?.policy?.enabled));
     setCategories(data?.policy?.categories || {});
     setCustomBlocklist(textAreaValueFromList(data?.policy?.customBlocklist));
     setAllowlist(textAreaValueFromList(data?.policy?.allowlist));
   }, [data?.policy]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const runtime = data?.runtime || {};
   const environment = runtime.environment || {};
@@ -56,6 +58,11 @@ export default function ContentFilterPage({
   const busy = Boolean(loading || data?.saving || data?.syncing || data?.applying || data?.removing);
   const warningMessage = data?.message || runtime.lastMessage || '';
   const checkResult = data?.checkResult;
+  const enforcementLabel = runtime.enforcementMode === 'hosts'
+    ? 'Hosts'
+    : runtime.enforcementMode === 'proxy'
+      ? 'Proxy'
+      : 'None';
 
   function buildPayload() {
     return {
@@ -112,14 +119,19 @@ export default function ContentFilterPage({
           <p className="stat-meta">remote feeds cached locally before apply</p>
         </div>
         <div className="stat-card accent-neutral">
-          <p className="stat-label">Hosts Target</p>
-          <p className="stat-value atlas-stat-value--compact">{environment.hostsPath || 'Unsupported'}</p>
+          <p className="stat-label">Enforcement</p>
+          <p className="stat-value atlas-stat-value--compact">{enforcementLabel}</p>
           <p className="stat-meta">{environment.permissionMessage || 'system hosts file detection'}</p>
         </div>
       </div>
 
       {error ? <p className="form-message form-message--error">{error}</p> : null}
       {!error && warningMessage ? <p className="form-message form-message--success">{warningMessage}</p> : null}
+      {!error && runtime.hostsSkippedReason ? (
+        <p className="form-message form-message--error">
+          {runtime.hostsSkippedReason} Lista nu a fost scrisa in hosts ca sa nu incetineasca navigarea.
+        </p>
+      ) : null}
 
       <div className="atlas-panel-grid">
         <section className="panel-card atlas-hero-card">
@@ -190,6 +202,14 @@ export default function ContentFilterPage({
             <div className="detail-row">
               <span>Managed Entries</span>
               <strong>{formatInteger(runtime.managedEntryCount)}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Hosts Path</span>
+              <strong>{environment.hostsPath || 'Unsupported'}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Proxy Mode</span>
+              <strong>{runtime.proxyEnabled ? 'On' : 'Off'}</strong>
             </div>
             <div className="detail-row">
               <span>Last Apply</span>
