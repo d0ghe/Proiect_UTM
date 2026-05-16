@@ -52,7 +52,7 @@ export function EntropyHeatmap({ blocks, height = 60 }) {
   }, [blocks, height]);
 
   if (!blocks || blocks.length === 0) {
-    return <div className="empty-state">Nu există blocuri de entropie de afișat.</div>;
+    return <div className="empty-state">No entropy blocks to display.</div>;
   }
 
   return (
@@ -93,9 +93,9 @@ export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">U-Trust / MITRE ATT&CK</p>
+          <p className="page-breadcrumb">Argus / MITRE ATT&CK</p>
           <h1 className="page-title">ATT&CK Navigator Heat-map</h1>
-          <p className="page-subtitle">Tehnici detectate în ultimele 30 de zile, colorate după frecvență — stil ATT&CK Navigator.</p>
+          <p className="page-subtitle">Techniques detected in the last 30 days, colored by frequency - ATT&CK Navigator style.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <button className={`control-btn${view === 'heatmap' ? '' : ' control-btn--ghost'}`} onClick={() => setView('heatmap')} type="button">Heat-map</button>
@@ -198,6 +198,7 @@ export function MemoryScanPage({ data, loading, onScan }) {
   const [showAll, setShowAll] = useState(false);
 
   const threatColor = (t) => t === 'CRITICAL' ? '#ff453a' : t === 'SUSPICIOUS' ? '#f5a623' : '#34c759';
+  const findingColor = (severity) => severity === 'critical' ? '#ff453a' : severity === 'warning' ? '#f5a623' : '#64d2ff';
 
   const allProcs    = result?.processes || [];
   const visibleProcs = showAll ? allProcs : allProcs.filter((p) => p.threat !== 'CLEAN');
@@ -206,9 +207,9 @@ export function MemoryScanPage({ data, loading, onScan }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">U-Trust / Memory</p>
+          <p className="page-breadcrumb">Argus / Memory</p>
           <h1 className="page-title">Live Process Memory Scanner</h1>
-          <p className="page-subtitle">Analizează toate procesele active: căi suspecte, obfuscare în argumente, masquerade, parent-child chains anormale.</p>
+          <p className="page-subtitle">Analyzes all running processes: suspicious paths, argument obfuscation, masquerading, and abnormal parent-child chains.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {summary && (
@@ -250,6 +251,7 @@ export function MemoryScanPage({ data, loading, onScan }) {
               { label: 'Critical', value: summary.critical, color: '#ff453a' },
               { label: 'Suspicious', value: summary.suspicious, color: '#f5a623' },
               { label: 'Clean', value: summary.clean, color: '#34c759' },
+              { label: 'Info Only', value: summary.infoOnly || 0, color: '#64d2ff' },
               { label: 'Scan Time', value: `${summary.scanTimeMs}ms`, color: '#636366' },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ flex: '1 1 120px', padding: '0.85rem 1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: 10 }}>
@@ -289,20 +291,23 @@ export function MemoryScanPage({ data, loading, onScan }) {
                 {proc.path && <div style={{ fontSize: '0.72rem', color: '#666', fontFamily: 'monospace', marginBottom: proc.findings.length ? '0.4rem' : 0 }}>{proc.path}</div>}
                 {proc.findings.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                    {proc.findings.map((f, i) => (
-                      <span
-                        key={i}
-                        style={{
-                          fontSize: '0.68rem', padding: '0.1rem 0.45rem', borderRadius: 4,
-                          background: f.severity === 'critical' ? 'rgba(255,69,58,0.15)' : 'rgba(245,166,35,0.15)',
-                          color: f.severity === 'critical' ? '#ff453a' : '#f5a623',
-                          border: `1px solid ${f.severity === 'critical' ? '#ff453a' : '#f5a623'}44`,
-                        }}
-                        title={f.detail}
-                      >
-                        {f.type}
-                      </span>
-                    ))}
+                    {proc.findings.map((f, i) => {
+                      const color = findingColor(f.severity);
+                      return (
+                        <span
+                          key={i}
+                          style={{
+                            fontSize: '0.68rem', padding: '0.1rem 0.45rem', borderRadius: 4,
+                            background: `${color}22`,
+                            color,
+                            border: `1px solid ${color}44`,
+                          }}
+                          title={f.detail}
+                        >
+                          {f.type}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -338,9 +343,9 @@ export function ThreatIntelPage({ intel, loading, onRefresh, onReset }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">U-Trust / Threat Intelligence</p>
+          <p className="page-breadcrumb">Argus / Threat Intelligence</p>
           <h1 className="page-title">Threat Intelligence Dashboard</h1>
-          <p className="page-subtitle">Statistici globale agregate: top hash-uri, domenii, IP-uri, tehnici MITRE.</p>
+          <p className="page-subtitle">Aggregated global statistics: top hashes, domains, IPs, and MITRE techniques.</p>
         </div>
         <div className="header-meta">
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
@@ -420,9 +425,9 @@ export function HoneypotsPage({ data, onRefresh, onPlant, onRemove, onCheck }) {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">U-Trust / Honeypots</p>
+          <p className="page-breadcrumb">Argus / Honeypots</p>
           <h1 className="page-title">Honeypot Canary Files</h1>
-          <p className="page-subtitle">Fișiere "momeală" plantate pentru a detecta exfiltrare, ransomware, insider threat.</p>
+          <p className="page-subtitle">Decoy files planted to detect exfiltration, ransomware, and insider threats.</p>
         </div>
         <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
       </div>
@@ -529,9 +534,9 @@ rule Embedded_PE {
     <div className="page-content">
       <div className="page-header">
         <div>
-          <p className="page-breadcrumb">U-Trust / Custom Rules</p>
+          <p className="page-breadcrumb">Argus / Custom Rules</p>
           <h1 className="page-title">YARA-style Rule Editor</h1>
-          <p className="page-subtitle">Definește detecții custom: ASCII strings, hex patterns, regex, cu condiții logice.</p>
+          <p className="page-subtitle">Define custom detections with ASCII strings, hex patterns, regex, and logical conditions.</p>
         </div>
       </div>
 

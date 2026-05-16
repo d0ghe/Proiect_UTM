@@ -14,22 +14,22 @@ const PACKER_BYTE_SIGNATURES = [
   {
     pattern: Buffer.from('555058', 'hex'),
     name: 'UPX_Header',
-    description: 'Semnătură header UPX (0x555058) — executabil comprimat cu UPX packer.',
+    description: 'UPX header signature (0x555058) - executable compressed with the UPX packer.',
   },
   {
     pattern: Buffer.from('4D5052455353', 'hex'),
     name: 'MPRESS_Packer',
-    description: 'Semnătură MPRESS packer detectată — cod executabil comprimat.',
+    description: 'MPRESS packer signature detected - compressed executable code.',
   },
   {
     pattern: Buffer.from('2e4153506b', 'hex'),
     name: 'ASPack',
-    description: 'Semnătură ASPack packer — obfuscare/comprimare PE.',
+    description: 'ASPack packer signature - PE obfuscation/compression.',
   },
   {
     pattern: Buffer.from('50454b', 'hex'),
     name: 'PECompact',
-    description: 'Semnătură PECompact detectată — executabil PE comprimat.',
+    description: 'PECompact signature detected - compressed PE executable.',
   },
 ];
 
@@ -88,7 +88,7 @@ function scanStrings(fileBuffer) {
       category: 'anti_vm',
       severity: 'warning',
       matches: antiVm,
-      description: `Indicatori anti-VM găsiți: ${antiVm.slice(0, 5).join(', ')}${antiVm.length > 5 ? ` (+${antiVm.length - 5})` : ''}.`,
+      description: `Anti-VM indicators found: ${antiVm.slice(0, 5).join(', ')}${antiVm.length > 5 ? ` (+${antiVm.length - 5})` : ''}.`,
     });
   }
 
@@ -98,7 +98,7 @@ function scanStrings(fileBuffer) {
       category: 'anti_debug',
       severity: 'warning',
       matches: antiDebug,
-      description: `API-uri anti-debug găsite: ${antiDebug.slice(0, 4).join(', ')}${antiDebug.length > 4 ? ` (+${antiDebug.length - 4})` : ''}.`,
+      description: `Anti-debug APIs found: ${antiDebug.slice(0, 4).join(', ')}${antiDebug.length > 4 ? ` (+${antiDebug.length - 4})` : ''}.`,
     });
   }
 
@@ -108,7 +108,7 @@ function scanStrings(fileBuffer) {
       category: 'dangerous_imports',
       severity: dangerous.length > 3 ? 'critical' : 'warning',
       matches: dangerous,
-      description: `Import-uri API periculoase: ${dangerous.slice(0, 5).join(', ')}${dangerous.length > 5 ? ` (+${dangerous.length - 5})` : ''}.`,
+      description: `Dangerous API imports: ${dangerous.slice(0, 5).join(', ')}${dangerous.length > 5 ? ` (+${dangerous.length - 5})` : ''}.`,
     });
   }
 
@@ -150,7 +150,7 @@ function detectEvasion(fileBuffer) {
       category: 'packer',
       severity: 'warning',
       matches: packers.map((p) => p.name),
-      description: `Semnături packer detectate: ${packers.map((p) => p.name).join(', ')}.`,
+      description: `Packer signatures detected: ${packers.map((p) => p.name).join(', ')}.`,
     });
   }
 

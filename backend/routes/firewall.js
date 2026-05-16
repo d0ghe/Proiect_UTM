@@ -44,7 +44,7 @@ router.post('/rules', (req, res) => {
 
   const portNum = Number(port);
   if (!port || !Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
-    return res.status(400).json({ success: false, message: 'Port invalid (1–65535).' });
+    return res.status(400).json({ success: false, message: 'Invalid port (1-65535).' });
   }
 
   if (String(action || '').toUpperCase() === 'BLOCK' && PROTECTED_WEB_PORTS.has(portNum)) {
@@ -71,8 +71,8 @@ router.post('/rules', (req, res) => {
   res.status(201).json({
     success: true,
     message: osFirewall.applied
-      ? 'Regula a fost adaugata si aplicata in firewall-ul OS.'
-      : 'Regula a fost salvata in aplicatie, dar nu a fost aplicata in Windows Firewall.',
+      ? 'The rule was added and applied to the OS firewall.'
+      : 'The rule was saved in the application, but it was not applied to Windows Firewall.',
     osFirewall,
     rule: nextRule,
   });
@@ -96,7 +96,7 @@ router.delete('/rules/:id', (req, res) => {
 
   const existingRule = getFirewallRule(id);
   if (!existingRule) {
-    return res.status(404).json({ success: false, message: `Regula ${id} nu există.` });
+    return res.status(404).json({ success: false, message: `Rule ${id} does not exist.` });
   }
 
   let osFirewall = { success: true, applied: false, message: 'No OS firewall rule was recorded for this entry.' };
@@ -114,7 +114,7 @@ router.delete('/rules/:id', (req, res) => {
 
   const removedRule = deleteFirewallRule(id);
 
-  res.json({ success: true, message: `Regula portului ${removedRule.port} ștearsă.`, osFirewall, rule: removedRule });
+  res.json({ success: true, message: `Rule for port ${removedRule.port} deleted.`, osFirewall, rule: removedRule });
 });
 
 module.exports = router;

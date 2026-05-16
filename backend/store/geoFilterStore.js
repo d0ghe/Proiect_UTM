@@ -7,6 +7,16 @@ function createDefault() {
   return { enabled: false, blockedCountries: [] };
 }
 
+function normalizeCountries(countries) {
+  if (!Array.isArray(countries)) return [];
+
+  return Array.from(new Set(
+    countries
+      .map((c) => String(c).toUpperCase().trim())
+      .filter((c) => /^[A-Z]{2}$/.test(c)),
+  ));
+}
+
 function read() {
   try {
     if (!fs.existsSync(STORE_FILE)) return createDefault();
@@ -15,7 +25,7 @@ function read() {
     const parsed = JSON.parse(raw);
     return {
       enabled: Boolean(parsed.enabled),
-      blockedCountries: Array.isArray(parsed.blockedCountries) ? parsed.blockedCountries : [],
+      blockedCountries: normalizeCountries(parsed.blockedCountries),
     };
   } catch {
     return createDefault();
@@ -34,12 +44,10 @@ function updateGeoFilter(patch = {}) {
   const state = read();
   if (patch.enabled !== undefined) state.enabled = Boolean(patch.enabled);
   if (Array.isArray(patch.blockedCountries)) {
-    state.blockedCountries = patch.blockedCountries
-      .map((c) => String(c).toUpperCase().trim())
-      .filter((c) => /^[A-Z]{2}$/.test(c));
+    state.blockedCountries = normalizeCountries(patch.blockedCountries);
   }
   write(state);
   return state;
 }
 
-module.exports = { getGeoFilterState, updateGeoFilter };
+module.exports = { getGeoFilterState, updateGeoFilter, normalizeCountries };

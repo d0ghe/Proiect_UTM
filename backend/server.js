@@ -30,7 +30,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ success: true, message: 'U-Trust backend is online.' });
+  res.json({ success: true, message: 'Argus backend is online.' });
 });
 
 app.use('/api',                require('./routes/auth'));
@@ -42,7 +42,6 @@ app.use('/api/events',         require('./routes/events'));
 app.use('/api/controls',       require('./routes/controls'));
 app.use('/api/cleanup',        require('./routes/cleanup'));
 app.use('/api/content-filter', require('./routes/contentFilter'));
-app.use('/api/signal',         require('./routes/signal'));
 app.use('/api/intel',          require('./routes/intelligence'));
 app.use('/api/report',         require('./routes/report'));
 app.use('/api/geo-filter',     require('./routes/geoFilter'));
@@ -66,11 +65,15 @@ server.on('error', (error) => {
 
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 const BROWSER_PROXY_PORT = 8877;
-const PROXY_PAC_DIR = path.join(process.env.TEMP || process.env.TMP || __dirname, 'u-trust');
+const PROXY_PAC_DIR = path.join(process.env.TEMP || process.env.TMP || __dirname, 'argus');
 const PROXY_PAC_PATH = path.join(PROXY_PAC_DIR, 'browser-proxy.pac');
 const BROWSER_PROXY_ENABLED = parseBoolean(
   process.env.CONTENT_FILTER_BROWSER_PROXY_ENABLED || process.env.CONTENT_FILTER_PROXY_ENABLED,
   true,
+);
+const BROWSER_PROXY_DIRECT_FALLBACK = parseBoolean(
+  process.env.CONTENT_FILTER_PROXY_DIRECT_FALLBACK,
+  false,
 );
 let stopBrowserProxyServer = null;
 
@@ -105,6 +108,9 @@ function buildPacFileUrl(filePath) {
 
 function writeBrowserProxyPac() {
   fs.mkdirSync(PROXY_PAC_DIR, { recursive: true });
+  const externalProxyRule = BROWSER_PROXY_DIRECT_FALLBACK
+    ? `PROXY 127.0.0.1:${BROWSER_PROXY_PORT}; DIRECT`
+    : `PROXY 127.0.0.1:${BROWSER_PROXY_PORT}`;
   const pac = `function FindProxyForURL(url, host) {
   if (
     isPlainHostName(host) ||
@@ -123,7 +129,7 @@ function writeBrowserProxyPac() {
     return "DIRECT";
   }
 
-  return "PROXY 127.0.0.1:${BROWSER_PROXY_PORT}; DIRECT";
+  return "${externalProxyRule}";
 }
 `;
   fs.writeFileSync(PROXY_PAC_PATH, pac, 'utf8');
@@ -168,7 +174,7 @@ async function enableChromeProxy() {
     `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
   ].join('');
   await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
-  console.log(`[+] Browser PAC set to ${pacUrl} with DIRECT fallback.`);
+  console.log(`[+] Browser PAC set to ${pacUrl}${BROWSER_PROXY_DIRECT_FALLBACK ? ' with DIRECT fallback' : ''}.`);
 }
 
 async function disableChromeProxy() {
@@ -208,7 +214,7 @@ async function disableChromeProxyIfOwned() {
   const pacConfig = String(pacResult.stdout || '');
   const ownedProxy = proxyServer.includes(`127.0.0.1:${BROWSER_PROXY_PORT}`)
     || proxyServer.includes(`localhost:${BROWSER_PROXY_PORT}`)
-    || pacConfig.includes('u-trust')
+    || pacConfig.includes('argus')
     || pacConfig.includes('browser-proxy.pac');
 
   if (ownedProxy) {
@@ -217,7 +223,7 @@ async function disableChromeProxyIfOwned() {
 }
 
 server.listen(PORT, async () => {
-  console.log(`[+] U-Trust backend  ->  http://localhost:${PORT}`);
+  console.log(`[+] Argus backend  ->  http://localhost:${PORT}`);
   console.log(`[+] WebSocket alerts  →  ws://localhost:${PORT}/ws/alerts`);
 
   if (BROWSER_PROXY_ENABLED) {

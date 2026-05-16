@@ -8,29 +8,29 @@
  */
 
 const POWERSHELL_INDICATORS = [
-  { regex: /-encodedcommand|-enc\b/i, name: 'PowerShell -EncodedCommand', severity: 'critical', description: 'PowerShell encoded command (Base64) — tehnică standard de bypass AV.' },
-  { regex: /\biex\s*\(|invoke-expression/i, name: 'IEX/Invoke-Expression', severity: 'critical', description: 'Execuție dinamică de cod prin IEX/Invoke-Expression.' },
-  { regex: /frombase64string/i, name: 'FromBase64String', severity: 'warning', description: 'Decodare Base64 în runtime.' },
+  { regex: /-encodedcommand|-enc\b/i, name: 'PowerShell -EncodedCommand', severity: 'critical', description: 'PowerShell encoded command (Base64) - standard AV bypass technique.' },
+  { regex: /\biex\s*\(|invoke-expression/i, name: 'IEX/Invoke-Expression', severity: 'critical', description: 'Dynamic code execution through IEX/Invoke-Expression.' },
+  { regex: /frombase64string/i, name: 'FromBase64String', severity: 'warning', description: 'Runtime Base64 decoding.' },
   { regex: /downloadstring|webclient|net\.webclient/i, name: 'WebClient.DownloadString', severity: 'critical', description: 'Download remote code (download cradle).' },
-  { regex: /bypass|hidden|noprofile/i, name: 'Execution Policy Bypass', severity: 'warning', description: 'Bypass al politicilor de execuție PowerShell.' },
-  { regex: /\$\{[a-z]\}|`[a-z]/i, name: 'Variable Obfuscation', severity: 'warning', description: 'Obfuscare cu variabile/backtick.' },
-  { regex: /\.gettype\(\)\.assembly|reflection/i, name: 'Reflection Abuse', severity: 'warning', description: 'Abuz de reflection .NET.' },
+  { regex: /bypass|hidden|noprofile/i, name: 'Execution Policy Bypass', severity: 'warning', description: 'PowerShell execution policy bypass.' },
+  { regex: /\$\{[a-z]\}|`[a-z]/i, name: 'Variable Obfuscation', severity: 'warning', description: 'Variable/backtick obfuscation.' },
+  { regex: /\.gettype\(\)\.assembly|reflection/i, name: 'Reflection Abuse', severity: 'warning', description: '.NET reflection abuse.' },
 ];
 
 const JS_INDICATORS = [
-  { regex: /\beval\s*\(/i, name: 'eval()', severity: 'critical', description: 'eval() — execuție dinamică de cod.' },
-  { regex: /new\s+function\s*\(/i, name: 'new Function()', severity: 'critical', description: 'Function constructor — eval indirect.' },
-  { regex: /unescape\s*\(|decodeuricomponent/i, name: 'unescape/decodeURIComponent', severity: 'warning', description: 'Decodare URL-encoded — payload obfuscat.' },
-  { regex: /string\.fromcharcode/i, name: 'String.fromCharCode', severity: 'warning', description: 'Construcție string din coduri ASCII — obfuscare clasică.' },
-  { regex: /atob\s*\(|btoa\s*\(/i, name: 'atob/btoa', severity: 'warning', description: 'Encoding Base64 în JS.' },
-  { regex: /document\.write\s*\(.*unescape/i, name: 'document.write(unescape(', severity: 'critical', description: 'Drive-by injection clasic.' },
+  { regex: /\beval\s*\(/i, name: 'eval()', severity: 'critical', description: 'eval() - dynamic code execution.' },
+  { regex: /new\s+function\s*\(/i, name: 'new Function()', severity: 'critical', description: 'Function constructor - indirect eval.' },
+  { regex: /unescape\s*\(|decodeuricomponent/i, name: 'unescape/decodeURIComponent', severity: 'warning', description: 'URL-encoded decoding - obfuscated payload.' },
+  { regex: /string\.fromcharcode/i, name: 'String.fromCharCode', severity: 'warning', description: 'String construction from ASCII codes - classic obfuscation.' },
+  { regex: /atob\s*\(|btoa\s*\(/i, name: 'atob/btoa', severity: 'warning', description: 'Base64 encoding in JavaScript.' },
+  { regex: /document\.write\s*\(.*unescape/i, name: 'document.write(unescape(', severity: 'critical', description: 'Classic drive-by injection.' },
 ];
 
 const VBS_INDICATORS = [
-  { regex: /\bexecute\s*\(|\bexecuteglobal/i, name: 'Execute/ExecuteGlobal', severity: 'critical', description: 'VBScript Execute — eval echivalent.' },
-  { regex: /createobject\s*\(\s*["']wscript\.shell/i, name: 'WScript.Shell.Run', severity: 'critical', description: 'VBScript spawnează procese shell.' },
+  { regex: /\bexecute\s*\(|\bexecuteglobal/i, name: 'Execute/ExecuteGlobal', severity: 'critical', description: 'VBScript Execute - eval equivalent.' },
+  { regex: /createobject\s*\(\s*["']wscript\.shell/i, name: 'WScript.Shell.Run', severity: 'critical', description: 'VBScript spawns shell processes.' },
   { regex: /msxml2\.xmlhttp|microsoft\.xmlhttp/i, name: 'XMLHTTP download', severity: 'warning', description: 'VBScript download cradle.' },
-  { regex: /chr\s*\(\s*\d+\s*\)/i, name: 'Chr() obfuscation', severity: 'warning', description: 'Construcție string din char codes (Chr).' },
+  { regex: /chr\s*\(\s*\d+\s*\)/i, name: 'Chr() obfuscation', severity: 'warning', description: 'String construction from character codes (Chr).' },
 ];
 
 function detectLanguage(text, filename = '') {
@@ -113,7 +113,7 @@ function analyzeScript(buffer, filename = '') {
     findings.push({
       name: 'High Obfuscation Density',
       severity: 'warning',
-      description: `${Math.round(density.nonAlphaRatio * 100)}% non-alpha + ${density.longLines} linii > 200 char.`,
+      description: `${Math.round(density.nonAlphaRatio * 100)}% non-alpha + ${density.longLines} lines > 200 char.`,
       language,
     });
   }

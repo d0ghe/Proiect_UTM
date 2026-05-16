@@ -1,6 +1,6 @@
-# U-Trust
+# Argus
 
-U-Trust is a local security platform with a dashboard for system telemetry, proxy-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
+Argus is a local security platform with a dashboard for system telemetry, proxy-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
 
 It is designed to give you a single place where you can monitor the machine, run scans, review recent security activity, and use external malware-analysis providers when they are configured.
 
@@ -79,11 +79,12 @@ The repository can now keep encrypted provider secrets in `backend/config/secret
 
 ## Content Filtering
 
-The Content Filtering tab applies blocking through the local U-Trust browser proxy. The backend compiles the selected feeds into an in-memory block cache, and the proxy checks each HTTP or HTTPS destination before opening the outbound connection.
+The Content Filtering tab applies blocking through the local Argus browser proxy. The backend compiles the selected feeds into an in-memory block cache, and the proxy checks each HTTP or HTTPS destination before opening the outbound connection.
 
 - Windows uses WinINET proxy settings for Chrome and Edge auto-configuration
 - no administrator privileges are required for the content-filter policy itself
 - `CONTENT_FILTER_BROWSER_PROXY_ENABLED=false` can disable browser proxy auto-configuration when needed
+- external browser traffic is routed through the proxy without a direct fallback by default; set `CONTENT_FILTER_PROXY_DIRECT_FALLBACK=true` only for development fail-open behavior
 - optional QUIC hardening can be enabled with `CONTENT_FILTER_BLOCK_QUIC=true`
 
 ## Development Notes

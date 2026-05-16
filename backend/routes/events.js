@@ -14,7 +14,7 @@ const LOG_FILE = path.join(__dirname, '../scans.log');
 router.use(verifyToken);
 
 function buildLogEvent(line, index) {
-  const match = line.match(/^\[(.+?)\]\s+STATUS:\s+([^|]+)\s+\|\s+Fisier:\s+([^|]+)\s+\|\s+Hash:\s+([^|]+)\s+\|\s+Rezultat:\s+(.+)$/);
+  const match = line.match(/^\[(.+?)\]\s+STATUS:\s+([^|]+)\s+\|\s+(?:File|Fisier):\s+([^|]+)\s+\|\s+Hash:\s+([^|]+)\s+\|\s+(?:Result|Rezultat):\s+(.+)$/);
 
   if (!match) {
     return {

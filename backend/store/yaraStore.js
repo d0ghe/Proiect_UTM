@@ -6,7 +6,7 @@ const RULES_FILE = path.join(__dirname, 'yara-rules.yar');
 const BUILTIN_RULES = `
 rule Mimikatz_Strings {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Mimikatz credential dumper strings"
   strings:
@@ -21,7 +21,7 @@ rule Mimikatz_Strings {
 
 rule Metasploit_Meterpreter {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Metasploit Meterpreter payload indicators"
   strings:
@@ -36,7 +36,7 @@ rule Metasploit_Meterpreter {
 
 rule PowerShell_Encoded_Cradle {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "PowerShell encoded download cradle"
   strings:
@@ -52,7 +52,7 @@ rule PowerShell_Encoded_Cradle {
 
 rule Ransomware_Indicators {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Generic ransomware behavioral indicators"
   strings:
@@ -71,7 +71,7 @@ rule Ransomware_Indicators {
 
 rule Cobalt_Strike {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Cobalt Strike beacon indicators"
   strings:
@@ -88,7 +88,7 @@ rule Cobalt_Strike {
 
 rule Keylogger_Indicators {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Keylogger / spyware indicators"
   strings:
@@ -103,7 +103,7 @@ rule Keylogger_Indicators {
 
 rule Remote_Access_Tool {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Remote access trojan indicators"
   strings:
@@ -120,7 +120,7 @@ rule Remote_Access_Tool {
 
 rule Shellcode_Loader {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Shellcode loader / injector patterns"
   strings:
@@ -135,7 +135,7 @@ rule Shellcode_Loader {
 
 rule Office_Macro_Dropper {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Malicious Office macro dropper"
   strings:
@@ -151,7 +151,7 @@ rule Office_Macro_Dropper {
 
 rule Credential_Theft {
   meta:
-    author = "U-Trust"
+    author = "Argus"
     severity = "critical"
     description = "Credential harvesting indicators"
   strings:

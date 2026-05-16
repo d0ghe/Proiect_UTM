@@ -15,7 +15,7 @@ function applyQuicBlock() {
     `Remove-NetFirewallRule -DisplayName '${QUIC_RULE}' -ErrorAction SilentlyContinue;` +
     `New-NetFirewallRule -DisplayName '${QUIC_RULE}' -Direction Outbound ` +
     `-Protocol UDP -RemotePort 443 -Action Block -Enabled True -ErrorAction Stop"`,
-    (err) => { if (!err) console.log('[+] QUIC blocat (UDP 443 outbound) — social/gambling vor fi blocate complet.'); }
+    (err) => { if (!err) console.log('[+] QUIC blocked (UDP 443 outbound) - social/gambling will be fully blocked.'); }
   );
 }
 function removeQuicBlock() {
@@ -274,7 +274,7 @@ async function fetchText(sourceUrl, timeoutMs = 30000) {
   const response = await fetch(sourceUrl, {
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
-      'User-Agent': 'U-Trust-Core/1.0',
+      'User-Agent': 'Argus-Core/1.0',
       Accept: 'text/plain',
     },
   });

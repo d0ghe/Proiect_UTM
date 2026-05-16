@@ -84,7 +84,7 @@ function recordFileEvent(eventType, filePath) {
       type: 'ransomware_extension',
       severity: 'critical',
       path: filePath,
-      detail: `Fișier cu extensie ransomware cunoscută detectat: ${basename} (${ext})`,
+      detail: `File with known ransomware extension detected: ${basename} (${ext})`,
       at: new Date(now).toISOString(),
     };
     pushAlert(alert);
@@ -98,7 +98,7 @@ function recordFileEvent(eventType, filePath) {
       type: 'ransom_note',
       severity: 'critical',
       path: filePath,
-      detail: `Posibil ransom note creat: ${basename}`,
+      detail: `Possible ransom note created: ${basename}`,
       at: new Date(now).toISOString(),
     };
     pushAlert(alert);
@@ -116,7 +116,7 @@ function recordFileEvent(eventType, filePath) {
         fileCount: uniquePaths.size,
         windowSec: WINDOW_MS / 1000,
         sampleFiles: Array.from(uniquePaths).slice(0, 10),
-        detail: `${uniquePaths.size} fișiere modificate în ${WINDOW_MS / 1000}s — pattern tipic ransomware/wiper.`,
+        detail: `${uniquePaths.size} files modified in ${WINDOW_MS / 1000}s - typical ransomware/wiper pattern.`,
         at: new Date(now).toISOString(),
       };
       pushAlert(alert);

@@ -1,27 +1,12 @@
-/**
- * httpProxy.js — UTM Platform · Intercepting HTTP/HTTPS Proxy
- *
- * Runs a local proxy server on PROXY_PORT (8877).
- * Every outbound HTTP/HTTPS request from browsers passes through it.
- * The proxy checks each connection against the live firewall ruleset and
- * either forwards it or returns a 403 Blocked page.
- *
- * Works WITHOUT administrator privileges.
- * Chrome/Edge use Windows WinINET proxy settings (HKCU registry) which any
- * user can write — so we set those automatically on startup.
- */
-
 'use strict';
 
 const http = require('http');
-const net  = require('net');
+const net = require('net');
 const { URL } = require('url');
 
 const PROXY_PORT = 8877;
 const PROTECTED_WEB_PORTS = new Set([53, 80, 443]);
-let   proxyServer = null;
-
-/* ─── rule lookup ────────────────────────────────────────────────────────── */
+let proxyServer = null;
 
 function getRules() {
   try { return require('../store/runtimeState').getFirewallRules(); }
@@ -30,15 +15,13 @@ function getRules() {
 
 function isPortBlocked(port) {
   const p = Number(port);
-  if (PROTECTED_WEB_PORTS.has(p)) {
-    return false;
-  }
+  if (PROTECTED_WEB_PORTS.has(p)) return false;
 
   return getRules().some(
-    (r) =>
-      String(r.action).toUpperCase()  === 'BLOCK'  &&
-      String(r.status).toLowerCase()  === 'active' &&
-      Number(r.port)                  === p
+    (rule) =>
+      String(rule.action).toUpperCase() === 'BLOCK' &&
+      String(rule.status).toLowerCase() === 'active' &&
+      Number(rule.port) === p,
   );
 }
 
@@ -49,17 +32,51 @@ function isDomainBlocked(hostname) {
 
 async function isGeoBlocked(hostname) {
   try { return await require('../utils/geoFilter').isGeoBlocked(hostname); }
-  catch { return { blocked: false }; }
+  catch (err) {
+    console.error('[proxy] geo check failed:', err.message);
+    return { blocked: false };
+  }
 }
 
 function logContentBlock(hostname) {
   try { require('../utils/geoFilter').addContentBlock(hostname); } catch { /* ignore */ }
 }
 
-/* ─── blocked response helpers ───────────────────────────────────────────── */
+async function getBlockDecision(hostname, port) {
+  const normalizedPort = Number(port);
+
+  if (isPortBlocked(normalizedPort)) {
+    return {
+      blocked: true,
+      label: 'An active Firewall rule is blocking TCP port',
+      detail: `port ${normalizedPort}`,
+    };
+  }
+
+  if (isDomainBlocked(hostname)) {
+    logContentBlock(hostname);
+    return {
+      blocked: true,
+      label: 'This domain is blocked by the Content Filter policy.',
+      detail: hostname,
+    };
+  }
+
+  const geo = await isGeoBlocked(hostname);
+  if (geo.blocked) {
+    return {
+      blocked: true,
+      label: 'This destination is blocked by the Geo-Filter policy.',
+      detail: `${hostname} - ${geo.country}`,
+      geo,
+    };
+  }
+
+  return { blocked: false };
+}
 
 const BLOCK_HTML = (reason, detail) => `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Blocked — UTM Firewall</title>
+<html lang="en"><head><meta charset="utf-8"><title>Blocked - UTM Firewall</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     background:#0a0a0a;color:#e8e8e8;display:flex;align-items:center;
@@ -75,16 +92,16 @@ const BLOCK_HTML = (reason, detail) => `<!DOCTYPE html>
   <h1>Connection Blocked</h1>
   <p>${reason}</p>
   <p><code>${detail}</code></p>
-  <p>Modify the rule in <strong>U-Trust</strong> to restore access.</p>
+  <p>Modify the rule in <strong>Argus</strong> to restore access.</p>
 </div></body></html>`;
 
 function sendBlockHtml(res, label, detail) {
   const body = BLOCK_HTML(label, detail);
   res.writeHead(403, {
-    'Content-Type':   'text/html; charset=utf-8',
+    'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
-    'X-UTM-Block':    detail,
-    'Connection':     'close',
+    'X-UTM-Block': detail,
+    Connection: 'close',
   });
   res.end(body);
 }
@@ -92,17 +109,15 @@ function sendBlockHtml(res, label, detail) {
 function sendBlockSocket(socket, label, detail) {
   const body = BLOCK_HTML(label, detail);
   socket.write(
-    `HTTP/1.1 403 Forbidden\r\n` +
-    `Content-Type: text/html; charset=utf-8\r\n` +
+    'HTTP/1.1 403 Forbidden\r\n' +
+    'Content-Type: text/html; charset=utf-8\r\n' +
     `Content-Length: ${Buffer.byteLength(body)}\r\n` +
     `X-UTM-Block: ${detail}\r\n` +
-    `Connection: close\r\n\r\n` +
-    body
+    'Connection: close\r\n\r\n' +
+    body,
   );
   socket.destroy();
 }
-
-/* ─── safe socket helpers ────────────────────────────────────────────────── */
 
 function safeWrite(socket, data) {
   try { if (socket.writable) socket.write(data); } catch { /* ignore */ }
@@ -118,7 +133,23 @@ function pipeWithErrors(src, dst) {
   src.pipe(dst, { end: true });
 }
 
-/* ─── proxy logic ────────────────────────────────────────────────────────── */
+function parseConnectTarget(target) {
+  const value = String(target || '');
+  const ipv6Match = value.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (ipv6Match) {
+    return { host: ipv6Match[1], port: Number(ipv6Match[2]) || 443 };
+  }
+
+  const separator = value.lastIndexOf(':');
+  if (separator === -1) {
+    return { host: value, port: 443 };
+  }
+
+  return {
+    host: value.slice(0, separator),
+    port: Number(value.slice(separator + 1)) || 443,
+  };
+}
 
 async function handleHttp(req, res) {
   try {
@@ -126,72 +157,60 @@ async function handleHttp(req, res) {
     try {
       targetUrl = new URL(req.url.startsWith('http') ? req.url : `http://${req.headers.host}${req.url}`);
     } catch {
-      res.writeHead(400); res.end('Bad Request'); return;
-    }
-
-    const port = Number(targetUrl.port || 80);
-    if (isPortBlocked(port)) {
-      sendBlockHtml(res, `An active Firewall rule is blocking TCP port`, `port ${port}`);
-      return;
-    }
-    if (isDomainBlocked(targetUrl.hostname)) {
-      logContentBlock(targetUrl.hostname);
-      sendBlockHtml(res, `This domain is blocked by the Content Filter policy.`, targetUrl.hostname);
+      res.writeHead(400);
+      res.end('Bad Request');
       return;
     }
 
-    const geo = await isGeoBlocked(targetUrl.hostname);
-    if (geo.blocked) {
-      sendBlockHtml(res, `This destination is blocked by the Geo-Filter policy.`, `${targetUrl.hostname} — ${geo.country}`);
+    const port = Number(targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80));
+    const block = await getBlockDecision(targetUrl.hostname, port);
+    if (block.blocked) {
+      sendBlockHtml(res, block.label, block.detail);
       return;
     }
 
-    const options = {
+    const headers = { ...req.headers, host: targetUrl.host };
+    delete headers['proxy-connection'];
+
+    const upstream = http.request({
       hostname: targetUrl.hostname,
       port,
-      path:     targetUrl.pathname + targetUrl.search,
-      method:   req.method,
-      headers:  { ...req.headers, host: targetUrl.hostname },
-    };
-
-    const upstream = http.request(options, (upRes) => {
+      path: targetUrl.pathname + targetUrl.search,
+      method: req.method,
+      headers,
+    }, (upstreamRes) => {
       try {
-        if (!res.headersSent) res.writeHead(upRes.statusCode, upRes.headers);
-        pipeWithErrors(upRes, res);
-      } catch { safeDestroy(res); }
+        if (!res.headersSent) res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+        pipeWithErrors(upstreamRes, res);
+      } catch {
+        safeDestroy(res);
+      }
     });
 
     upstream.on('error', () => {
-      try { if (!res.headersSent) res.writeHead(502); res.end(); } catch { /* ignore */ }
+      try {
+        if (!res.headersSent) res.writeHead(502);
+        res.end();
+      } catch { /* ignore */ }
     });
 
     req.on('error', () => safeDestroy(upstream));
     pipeWithErrors(req, upstream);
   } catch (err) {
     console.error('[proxy] handleHttp unhandled:', err.message);
-    try { if (!res.headersSent) res.writeHead(500); res.end(); } catch { /* ignore */ }
+    try {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    } catch { /* ignore */ }
   }
 }
 
 async function handleConnect(req, clientSocket, head) {
   try {
-    const parts = req.url.split(':');
-    const host  = parts[0];
-    const port  = Number(parts[1]) || 443;
-
-    if (isPortBlocked(port)) {
-      sendBlockSocket(clientSocket, `An active Firewall rule is blocking TCP port`, `port ${port}`);
-      return;
-    }
-    if (isDomainBlocked(host)) {
-      logContentBlock(host);
-      sendBlockSocket(clientSocket, `This domain is blocked by the Content Filter policy.`, host);
-      return;
-    }
-
-    const geo = await isGeoBlocked(host);
-    if (geo.blocked) {
-      sendBlockSocket(clientSocket, `This destination is blocked by the Geo-Filter policy.`, `${host} — ${geo.country}`);
+    const { host, port } = parseConnectTarget(req.url);
+    const block = await getBlockDecision(host, port);
+    if (block.blocked) {
+      sendBlockSocket(clientSocket, block.label, block.detail);
       return;
     }
 
@@ -201,7 +220,10 @@ async function handleConnect(req, clientSocket, head) {
         if (head && head.length) safeWrite(serverSocket, head);
         pipeWithErrors(serverSocket, clientSocket);
         pipeWithErrors(clientSocket, serverSocket);
-      } catch { safeDestroy(clientSocket); safeDestroy(serverSocket); }
+      } catch {
+        safeDestroy(clientSocket);
+        safeDestroy(serverSocket);
+      }
     });
 
     serverSocket.on('error', () => {
@@ -215,8 +237,6 @@ async function handleConnect(req, clientSocket, head) {
   }
 }
 
-/* ─── lifecycle ──────────────────────────────────────────────────────────── */
-
 function startProxy() {
   if (proxyServer) return PROXY_PORT;
 
@@ -224,7 +244,7 @@ function startProxy() {
   proxyServer.on('connect', handleConnect);
 
   proxyServer.on('clientError', (_err, socket) => {
-    if (socket.writable) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); }
+    if (socket.writable) socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
     socket.destroy();
   });
 
@@ -244,6 +264,8 @@ function stopProxy(cb) {
   }
 }
 
-function isRunning() { return proxyServer !== null; }
+function isRunning() {
+  return proxyServer !== null;
+}
 
-module.exports = { startProxy, stopProxy, isRunning, PROXY_PORT };
+module.exports = { startProxy, stopProxy, isRunning, PROXY_PORT, getBlockDecision };

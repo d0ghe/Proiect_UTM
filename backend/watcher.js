@@ -52,7 +52,7 @@ setAlertCallback((alert) => {
       message: alert.detail,
       sound: true,
       wait: false,
-      appID: 'U-Trust',
+      appID: 'Argus',
     });
   } catch { /* ignore */ }
 
@@ -67,7 +67,7 @@ function notifyThreat(fileName, threatName) {
       message: `Threat detected: ${threatName}. ${fileName} moved to quarantine.`,
       sound: true,
       wait: false,
-      appID: 'U-Trust',
+      appID: 'Argus',
     });
   } catch { /* ignore */ }
 }
@@ -276,7 +276,7 @@ setInterval(() => {
           message: ev.message,
           sound: true,
           wait: false,
-          appID: 'U-Trust',
+          appID: 'Argus',
         });
       } catch { /* ignore */ }
     }

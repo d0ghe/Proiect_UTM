@@ -104,7 +104,7 @@ function tryXorBruteForce(buffer) {
           key: `0x${key.toString(16).padStart(2, '0').toUpperCase()}`,
           decoded: snippet,
           severity: 'critical',
-          description: `XOR cheie ${key.toString(16)} a revelat: ${hit}`,
+          description: `XOR key ${key.toString(16)} revealed: ${hit}`,
         });
       }
     }

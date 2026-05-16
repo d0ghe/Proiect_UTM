@@ -109,7 +109,7 @@ function updateGlobalStats(results) {
 function logScanResult(data) {
   const timestamp = new Date().toISOString();
   const detail = data.signature || data.message || 'No extra detail';
-  const logEntry = `[${timestamp}] STATUS: ${data.status} | Fisier: ${data.filename} | Hash: ${data.sha256 || '-'} | Rezultat: ${detail}\n`;
+  const logEntry = `[${timestamp}] STATUS: ${data.status} | File: ${data.filename} | Hash: ${data.sha256 || '-'} | Result: ${detail}\n`;
   fs.appendFileSync(LOG_FILE, logEntry);
 
   // Scrie și în Activity Log persistent

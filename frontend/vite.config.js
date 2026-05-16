@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const backendDir = path.join(projectRoot, 'backend')
-const restartLogDir = path.join(process.env.TEMP || process.env.TMP || backendDir, 'u-trust')
+const restartLogDir = path.join(process.env.TEMP || process.env.TMP || backendDir, 'argus')
 const restartLogPath = path.join(restartLogDir, 'backend-restart.log')
 
 function checkBackendHealth(timeoutMs = 2500) {
@@ -76,9 +76,9 @@ async function waitForBackend(timeoutMs = 12000) {
 
 function backendRestartPlugin() {
   return {
-    name: 'u-trust-backend-restarter',
+    name: 'argus-backend-restarter',
     configureServer(server) {
-      server.middlewares.use('/__utrust/restart-backend', async (req, res) => {
+      server.middlewares.use('/__argus/restart-backend', async (req, res) => {
         if (req.method !== 'POST') {
           res.statusCode = 405
           res.setHeader('Content-Type', 'application/json')

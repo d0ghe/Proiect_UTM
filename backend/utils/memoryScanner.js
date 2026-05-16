@@ -1,32 +1,9 @@
 'use strict';
 
-/**
- * Live Memory & Process Scanner
- *
- * Uses PowerShell + WMI to inspect running processes WITHOUT admin privileges.
- *
- * Detection layers:
- *  1. AppData/Temp path — WARNING only (many legit apps live here)
- *  2. Command-line obfuscation — CRITICAL (encoded PS, IEX, mshta remote, etc.)
- *  3. System process masquerade — CRITICAL (svchost/lsass from wrong path)
- *  4. Suspicious parent-child chains — CRITICAL (Office spawns shell)
- *  5. Hollow process — WARNING (no executable on disk)
- *
- * CRITICAL verdict requires either:
- *   - A single CRITICAL-severity indicator, OR
- *   - 2+ WARNING indicators combined
- *
- * Known-good list: hardcoded Electron/browser apps that legitimately run from
- * AppData. This ONLY suppresses the path warning — all other detectors still
- * apply. Cannot be modified at runtime (no API endpoint).
- */
-
 const { exec } = require('child_process');
 
-/* ── Hardcoded known-good process names (path warning suppressed only) ───── */
 const KNOWN_GOOD_PROCESSES = new Set([
-  // Electron / user-installed apps that legitimately live in AppData
-  'claude.exe', 'code.exe', 'cursor.exe', 'windsurf.exe',
+  'claude.exe', 'code.exe', 'cursor.exe', 'windsurf.exe', 'codex.exe',
   'discord.exe', 'discordptb.exe', 'discordcanary.exe',
   'slack.exe', 'teams.exe', 'msteams.exe',
   'spotify.exe', 'steam.exe', 'epicgameslauncher.exe',
@@ -37,90 +14,96 @@ const KNOWN_GOOD_PROCESSES = new Set([
   '1password.exe', 'bitwarden.exe', 'keepass.exe',
   'dropbox.exe', 'onedrive.exe', 'googledrivefs.exe',
   'lghub.exe', 'razer synapse.exe', 'corsairhid.exe',
-  // Browsers (sometimes installed per-user)
   'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe',
   'opera.exe', 'vivaldi.exe', 'thorium.exe',
-  // Dev tools installed per-user
-  'node.exe', 'git.exe', 'python.exe', 'python3.exe',
-  'wt.exe',   // Windows Terminal
-  // Antivirus / security (may run from ProgramData)
+  'node.exe', 'git.exe', 'python.exe', 'python3.exe', 'wt.exe',
   'mbam.exe', 'mbamservice.exe', 'avgui.exe', 'avguix.exe',
 ]);
 
-/* ── Suspicious path patterns (WARNING severity — not CRITICAL alone) ────── */
-const SUSPICIOUS_PATH_PATTERNS = [
-  { pattern: /\\appdata\\local\\temp\\/i,    name: 'AppDataLocalTemp' },
-  { pattern: /\\appdata\\roaming\\temp\\/i,  name: 'AppDataRoamingTemp' },
-  { pattern: /\\windows\\temp\\/i,           name: 'WindowsTemp' },
-  { pattern: /\\tmp\\/i,                     name: 'TmpDir' },
-  { pattern: /\\\$recycle\.bin\\/i,          name: 'RecycleBin' },
-  { pattern: /\\downloads\\/i,               name: 'Downloads' },
-  // Generic AppData (warning, not critical — many legit apps here)
-  { pattern: /\\appdata\\local(?!\\(programs|microsoft|packages))/i, name: 'AppDataLocal' },
-  { pattern: /\\appdata\\roaming(?!\\(microsoft|apple|mozilla))/i,   name: 'AppDataRoaming' },
-];
-
-/* ── Processes that must ONLY run from System32 / SysWOW64 ──────────────── */
-const SYSTEM_PROCESS_PATHS = {
-  'svchost.exe':   [/system32\\svchost\.exe/i,   /syswow64\\svchost\.exe/i],
-  'lsass.exe':     [/system32\\lsass\.exe/i],
-  'csrss.exe':     [/system32\\csrss\.exe/i],
-  'winlogon.exe':  [/system32\\winlogon\.exe/i],
-  'services.exe':  [/system32\\services\.exe/i],
-  'explorer.exe':  [/windows\\explorer\.exe/i],
-  'taskhostw.exe': [/system32\\taskhostw\.exe/i],
-  'spoolsv.exe':   [/system32\\spoolsv\.exe/i],
-  'smss.exe':      [/system32\\smss\.exe/i],
-  'wininit.exe':   [/system32\\wininit\.exe/i],
-};
-
-/* ── Hollow-process exceptions (no path = normal for kernel processes) ────── */
-const KERNEL_PROCESSES = new Set([
-  'system', 'registry', 'memory compression', 'secure system',
-  'idle', 'interrupts', 'dpc',
+const WINDOWS_CORE_PROCESSES = new Set([
+  'system idle process', 'system', 'registry', 'memory compression',
+  'secure system', 'idle', 'interrupts', 'dpc',
+  'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe',
+  'lsass.exe', 'lsaiso.exe', 'svchost.exe', 'fontdrvhost.exe', 'wudfhost.exe',
+  'dwm.exe', 'spoolsv.exe', 'taskhostw.exe', 'sihost.exe', 'runtimebroker.exe',
+  'dasHost.exe', 'ctfmon.exe', 'audiodg.exe', 'conhost.exe',
 ]);
 
-/* ── Command-line obfuscation indicators ─────────────────────────────────── */
-const CMD_INDICATORS = [
-  { pattern: /-enc(odedcommand)?[\s=]/i,   name: 'PS_EncodedCommand',  severity: 'critical' },
-  { pattern: /\biex\s*\(/i,                name: 'PS_IEX',              severity: 'critical' },
-  { pattern: /invoke-expression/i,          name: 'PS_InvokeExpression', severity: 'critical' },
-  { pattern: /downloadstring/i,             name: 'PS_DownloadString',   severity: 'critical' },
-  { pattern: /regsvr32.*scrobj/i,           name: 'Squiblydoo',          severity: 'critical' },
-  { pattern: /mshta\s+https?:\/\//i,       name: 'MSHTA_Remote',        severity: 'critical' },
-  { pattern: /wscript\s+https?:\/\//i,     name: 'WScript_Remote',      severity: 'critical' },
-  { pattern: /certutil\s+.*-decode/i,       name: 'CertUtil_Decode',     severity: 'critical' },
-  { pattern: /bitsadmin.*\/transfer/i,      name: 'BITSAdmin_Transfer',  severity: 'critical' },
-  { pattern: /frombase64string/i,           name: 'PS_Base64Decode',     severity: 'warning'  },
-  { pattern: /-bypass/i,                    name: 'PS_PolicyBypass',     severity: 'warning'  },
-  { pattern: /[A-Za-z0-9+/]{120,}={0,2}/,  name: 'LongBase64Arg',       severity: 'warning'  },
-  { pattern: /-windowstyle\s+hidden/i,      name: 'PS_HiddenWindow',     severity: 'warning'  },
-  { pattern: /-noprofile\s+-noninteractive/i, name: 'PS_NonInteractive', severity: 'warning'  },
+const SUSPICIOUS_PATH_PATTERNS = [
+  { pattern: /\\appdata\\local\\temp\\/i, name: 'AppDataLocalTemp' },
+  { pattern: /\\appdata\\roaming\\temp\\/i, name: 'AppDataRoamingTemp' },
+  { pattern: /\\windows\\temp\\/i, name: 'WindowsTemp' },
+  { pattern: /\\tmp\\/i, name: 'TmpDir' },
+  { pattern: /\\\$recycle\.bin\\/i, name: 'RecycleBin' },
+  { pattern: /\\downloads\\/i, name: 'Downloads' },
+  { pattern: /\\appdata\\local(?!\\(programs|microsoft|packages))/i, name: 'AppDataLocal' },
+  { pattern: /\\appdata\\roaming(?!\\(microsoft|apple|mozilla))/i, name: 'AppDataRoaming' },
 ];
 
-/* ── Suspicious parent-child chains ──────────────────────────────────────── */
+const SYSTEM_PROCESS_PATHS = {
+  'svchost.exe': [/\\windows\\system32\\svchost\.exe$/i, /\\windows\\syswow64\\svchost\.exe$/i],
+  'lsass.exe': [/\\windows\\system32\\lsass\.exe$/i],
+  'csrss.exe': [/\\windows\\system32\\csrss\.exe$/i],
+  'winlogon.exe': [/\\windows\\system32\\winlogon\.exe$/i],
+  'services.exe': [/\\windows\\system32\\services\.exe$/i],
+  'explorer.exe': [/\\windows\\explorer\.exe$/i],
+  'taskhostw.exe': [/\\windows\\system32\\taskhostw\.exe$/i],
+  'spoolsv.exe': [/\\windows\\system32\\spoolsv\.exe$/i],
+  'smss.exe': [/\\windows\\system32\\smss\.exe$/i],
+  'wininit.exe': [/\\windows\\system32\\wininit\.exe$/i],
+};
+
+const STATIC_CMD_INDICATORS = [
+  { pattern: /\biex\s*\(/i, name: 'PS_IEX', severity: 'critical' },
+  { pattern: /invoke-expression/i, name: 'PS_InvokeExpression', severity: 'critical' },
+  { pattern: /downloadstring/i, name: 'PS_DownloadString', severity: 'critical' },
+  { pattern: /regsvr32.*scrobj/i, name: 'Squiblydoo', severity: 'critical' },
+  { pattern: /mshta\s+https?:\/\//i, name: 'MSHTA_Remote', severity: 'critical' },
+  { pattern: /wscript\s+https?:\/\//i, name: 'WScript_Remote', severity: 'critical' },
+  { pattern: /certutil\s+.*-decode/i, name: 'CertUtil_Decode', severity: 'critical' },
+  { pattern: /bitsadmin.*\/transfer/i, name: 'BITSAdmin_Transfer', severity: 'critical' },
+  { pattern: /frombase64string/i, name: 'PS_Base64Decode', severity: 'warning' },
+  { pattern: /-windowstyle\s+hidden/i, name: 'PS_HiddenWindow', severity: 'warning' },
+];
+
+const BENIGN_AUTOMATION_PATTERNS = [
+  /long-lived powershell ast parser/i,
+  /rust command-safety layer/i,
+  /get-ciminstance\s+win32_process/i,
+  /select-object\s+processid,name,path,commandline,parentprocessid,workingsetsize/i,
+];
+
+const RISKY_DECODED_PS_PATTERNS = [
+  /\biex\b|\binvoke-expression\b/i,
+  /downloadstring|downloadfile|net\.webclient|start-bitstransfer/i,
+  /frombase64string|reflection\.assembly|add-type/i,
+  /set-mppreference|add-mppreference|disableantispyware|exclusionpath/i,
+  /regsvr32|rundll32|mshta|wscript|cscript|certutil|bitsadmin/i,
+  /new-object\s+net\.webclient/i,
+  /http[s]?:\/\/[^\s'"]+/i,
+];
+
 const SUSPICIOUS_PARENT_CHILD = [
   {
     parent: /winword|excel|powerpnt|outlook|onenote/i,
-    child:  /powershell|cmd\.exe|wscript|cscript|mshta/i,
-    name:   'Office_Spawns_Shell',
+    child: /powershell|cmd\.exe|wscript|cscript|mshta/i,
+    name: 'Office_Spawns_Shell',
     severity: 'critical',
   },
   {
     parent: /chrome|firefox|msedge|iexplore|brave/i,
-    child:  /powershell|wscript|mshta/i,
-    name:   'Browser_Spawns_Shell',
+    child: /powershell|wscript|mshta/i,
+    name: 'Browser_Spawns_Shell',
     severity: 'critical',
   },
   {
     parent: /explorer\.exe/i,
-    child:  /powershell.*-enc/i,
-    name:   'Explorer_Encoded_PS',
+    child: /powershell.*-enc/i,
+    name: 'Explorer_Encoded_PS',
     severity: 'critical',
   },
 ];
 
-/* ── PowerShell runner ───────────────────────────────────────────────────── */
 function runPS(script) {
   return new Promise((resolve) => {
     const cmd = `powershell -NonInteractive -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"')}"`;
@@ -131,129 +114,265 @@ function runPS(script) {
   });
 }
 
-/* ── Assess a single process ─────────────────────────────────────────────── */
-function assessProcess(proc, allProcs) {
+function normalizeProcessName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeProcessPath(proc) {
+  return String(proc.Path || proc.ExecutablePath || '').trim();
+}
+
+function findParent(proc, allProcs = []) {
+  return allProcs.find((candidate) => Number(candidate.ProcessId) === Number(proc.ParentProcessId)) || null;
+}
+
+function addFinding(findings, severity, type, tag, detail) {
+  findings.push({ severity, type, tag, detail });
+}
+
+function extractEncodedCommand(cmdline) {
+  const match = String(cmdline || '').match(/-(?:enc|encodedcommand)\s+([A-Za-z0-9+/=]{20,})/i);
+  return match?.[1] || '';
+}
+
+function decodePowerShellEncodedCommand(value) {
+  if (!value) return '';
+
+  try {
+    const decoded = Buffer.from(value, 'base64').toString('utf16le').replace(/\0/g, '').trim();
+    return decoded.length > 0 ? decoded : '';
+  } catch {
+    return '';
+  }
+}
+
+function isTrustedCodexParent(parent) {
+  const parentName = normalizeProcessName(parent?.Name);
+  const parentPath = normalizeProcessPath(parent).toLowerCase();
+  return parentName === 'codex.exe' && parentPath.includes('\\openai.chatgpt-');
+}
+
+function isOwnScannerCommand(cmdline) {
+  return /get-ciminstance\s+win32_process/i.test(cmdline)
+    && /convertto-json/i.test(cmdline)
+    && /processid/i.test(cmdline)
+    && /commandline/i.test(cmdline)
+    && /parentprocessid/i.test(cmdline)
+    && /workingsetsize/i.test(cmdline);
+}
+
+function isTrustedAutomationCommand(decoded, cmdline, parent) {
+  return isOwnScannerCommand(decoded || cmdline)
+    || (isTrustedCodexParent(parent) && BENIGN_AUTOMATION_PATTERNS.some((pattern) => pattern.test(decoded)));
+}
+
+function hasRiskyDecodedPowerShell(decoded) {
+  return RISKY_DECODED_PS_PATTERNS.some((pattern) => pattern.test(decoded));
+}
+
+function assessPowerShellCommandLine(findings, proc, parent) {
+  const name = normalizeProcessName(proc.Name);
+  const cmdline = String(proc.CommandLine || '');
+  if (!cmdline || !/^(powershell|pwsh)(\.exe)?$/i.test(name)) return;
+
+  const encoded = extractEncodedCommand(cmdline);
+  const decoded = decodePowerShellEncodedCommand(encoded);
+  const trustedAutomation = isTrustedAutomationCommand(decoded, cmdline, parent);
+
+  if (encoded) {
+    if (trustedAutomation) {
+      addFinding(
+        findings,
+        'info',
+        'TrustedEncodedPowerShell',
+        'TrustedAutomation',
+        'Encoded PowerShell belongs to known local automation tooling.',
+      );
+    } else if (decoded && hasRiskyDecodedPowerShell(decoded)) {
+      addFinding(
+        findings,
+        'critical',
+        'PS_EncodedCommand',
+        'DecodedRiskyPowerShell',
+        `Encoded PowerShell decodes to risky behavior: ${decoded.slice(0, 180)}`,
+      );
+    } else {
+      addFinding(
+        findings,
+        'warning',
+        'PS_EncodedCommand',
+        'EncodedPowerShell',
+        decoded
+          ? `Encoded PowerShell decoded without high-risk tokens: ${decoded.slice(0, 180)}`
+          : 'Encoded PowerShell could not be decoded.',
+      );
+    }
+  }
+
+  const hasEncodedPayload = Boolean(encoded);
+  for (const indicator of STATIC_CMD_INDICATORS) {
+    if (!indicator.pattern.test(cmdline)) continue;
+    addFinding(findings, indicator.severity, indicator.name, indicator.name, 'Suspicious argument pattern in command line.');
+  }
+
+  const hasLongBase64 = /[A-Za-z0-9+/]{120,}={0,2}/.test(cmdline);
+  if (hasLongBase64 && !hasEncodedPayload) {
+    addFinding(findings, 'warning', 'LongBase64Arg', 'LongBase64Arg', 'Long Base64-like command-line argument.');
+  }
+
+  const hasPolicyBypass = /-executionpolicy\s+bypass|-bypass\b/i.test(cmdline);
+  const hasNonInteractive = /-noprofile\b.*-noninteractive\b|-noninteractive\b.*-noprofile\b/i.test(cmdline);
+
+  if (hasPolicyBypass) {
+    addFinding(
+      findings,
+      trustedAutomation ? 'info' : 'warning',
+      'PS_PolicyBypass',
+      'PS_PolicyBypass',
+      trustedAutomation ? 'Policy bypass used by known local automation.' : 'PowerShell policy bypass argument.',
+    );
+  }
+
+  if (hasNonInteractive) {
+    addFinding(
+      findings,
+      trustedAutomation ? 'info' : 'warning',
+      'PS_NonInteractive',
+      'PS_NonInteractive',
+      trustedAutomation ? 'Non-interactive PowerShell used by known local automation.' : 'Non-interactive PowerShell command.',
+    );
+  }
+}
+
+function assessGenericCommandLine(findings, proc) {
+  const cmdline = String(proc.CommandLine || '');
+  const name = normalizeProcessName(proc.Name);
+  if (!cmdline || /^(powershell|pwsh)(\.exe)?$/i.test(name)) return;
+
+  for (const indicator of STATIC_CMD_INDICATORS) {
+    if (indicator.pattern.test(cmdline)) {
+      addFinding(findings, indicator.severity, indicator.name, indicator.name, 'Suspicious argument pattern in command line.');
+    }
+  }
+}
+
+function assessProcess(proc, allProcs = []) {
   const findings = [];
-  const name     = (proc.Name || '').toLowerCase();
-  const path     = (proc.Path || '').toLowerCase();
-  const cmdline  = (proc.CommandLine || '').toLowerCase();
+  const name = normalizeProcessName(proc.Name);
+  const originalPath = normalizeProcessPath(proc);
+  const path = originalPath.toLowerCase();
+  const cmdline = String(proc.CommandLine || '');
+  const parent = findParent(proc, allProcs);
   const parentId = proc.ParentProcessId;
   const isKnownGood = KNOWN_GOOD_PROCESSES.has(name);
 
-  // 1. Path-based check (WARNING only — not CRITICAL alone)
-  //    Skip for known-good processes (Electron apps, browsers etc.)
   if (path && !isKnownGood) {
-    for (const { pattern, name: patName } of SUSPICIOUS_PATH_PATTERNS) {
+    for (const { pattern, name: patternName } of SUSPICIOUS_PATH_PATTERNS) {
       if (pattern.test(path)) {
-        findings.push({
-          severity: 'warning',
-          type:     'SuspiciousPath',
-          tag:      patName,
-          detail:   `Executable in ${patName}: ${proc.Path}`,
-        });
+        addFinding(findings, 'warning', 'SuspiciousPath', patternName, `Executable in ${patternName}: ${originalPath}`);
         break;
       }
     }
   }
 
-  // 2. System process masquerade (always CRITICAL, even for known-good names)
   const expectedPaths = SYSTEM_PROCESS_PATHS[name];
-  if (expectedPaths && path && !expectedPaths.some((r) => r.test(path))) {
-    findings.push({
-      severity: 'critical',
-      type:     'ProcessMasquerade',
-      tag:      'Masquerade',
-      detail:   `${proc.Name} running from unexpected path: ${proc.Path}`,
-    });
+  if (expectedPaths && path && !expectedPaths.some((pattern) => pattern.test(path))) {
+    addFinding(findings, 'critical', 'ProcessMasquerade', 'Masquerade', `${proc.Name} running from unexpected path: ${originalPath}`);
   }
 
-  // 3. Command-line obfuscation (always checked, regardless of known-good)
-  if (cmdline) {
-    for (const ind of CMD_INDICATORS) {
-      if (ind.pattern.test(cmdline)) {
-        findings.push({ severity: ind.severity, type: ind.name, tag: ind.name, detail: 'Suspicious argument pattern in command line' });
+  assessPowerShellCommandLine(findings, proc, parent);
+  assessGenericCommandLine(findings, proc);
+
+  if (parent) {
+    for (const rel of SUSPICIOUS_PARENT_CHILD) {
+      if (rel.parent.test(parent.Name || '') && rel.child.test(`${cmdline} ${name}`)) {
+        addFinding(findings, rel.severity, rel.name, rel.name, `${parent.Name} spawned ${proc.Name}`);
       }
     }
   }
 
-  // 4. Suspicious parent-child
-  if (parentId && allProcs) {
-    const parent = allProcs.find((p) => p.ProcessId === parentId);
-    if (parent) {
-      for (const rel of SUSPICIOUS_PARENT_CHILD) {
-        if (rel.parent.test(parent.Name || '') && rel.child.test(cmdline || name)) {
-          findings.push({ severity: rel.severity, type: rel.name, tag: rel.name, detail: `${parent.Name} spawned ${proc.Name}` });
-        }
-      }
-    }
+  if (!path) {
+    const hasOtherSignal = findings.some((finding) => finding.severity === 'critical' || finding.severity === 'warning');
+    const expectedSystemProcess = WINDOWS_CORE_PROCESSES.has(name) || SYSTEM_PROCESS_PATHS[name];
+    const severity = hasOtherSignal || (!expectedSystemProcess && cmdline) ? 'warning' : 'info';
+    addFinding(
+      findings,
+      severity,
+      severity === 'info' ? 'LimitedProcessVisibility' : 'NoExecutablePath',
+      severity === 'info' ? 'LimitedVisibility' : 'HollowProcess',
+      severity === 'info'
+        ? 'Windows did not expose the executable path through WMI for this process.'
+        : 'No executable path was exposed while other suspicious context exists.',
+    );
   }
 
-  // 5. No path (possible hollow process) — skip kernel processes
-  if (!path && !KERNEL_PROCESSES.has(name)) {
-    findings.push({
-      severity: 'warning',
-      type:     'NoExecutablePath',
-      tag:      'HollowProcess',
-      detail:   `No executable path — possible process hollowing`,
-    });
-  }
-
-  // Score — CRITICAL requires: 1 critical indicator OR 2+ warnings
-  const criticalCount = findings.filter((f) => f.severity === 'critical').length;
-  const warningCount  = findings.filter((f) => f.severity === 'warning').length;
-  const score         = criticalCount * 40 + warningCount * 15;
-  const threat        = criticalCount >= 1 || warningCount >= 2
-    ? (criticalCount >= 1 ? 'CRITICAL' : 'SUSPICIOUS')
-    : warningCount === 1 ? 'SUSPICIOUS' : 'CLEAN';
+  const criticalCount = findings.filter((finding) => finding.severity === 'critical').length;
+  const warningCount = findings.filter((finding) => finding.severity === 'warning').length;
+  const infoCount = findings.filter((finding) => finding.severity === 'info').length;
+  const score = criticalCount * 50 + warningCount * 20;
+  const threat = criticalCount >= 1
+    ? 'CRITICAL'
+    : warningCount >= 1 ? 'SUSPICIOUS' : 'CLEAN';
 
   return {
-    pid:         proc.ProcessId,
-    name:        proc.Name,
-    path:        proc.Path || null,
-    cmdline:     proc.CommandLine ? proc.CommandLine.slice(0, 400) : null,
-    memMB:       proc.WorkingSetSize ? Math.round(proc.WorkingSetSize / 1024 / 1024) : 0,
-    parentId:    parentId || null,
+    pid: proc.ProcessId,
+    name: proc.Name,
+    path: originalPath || null,
+    cmdline: cmdline ? cmdline.slice(0, 400) : null,
+    memMB: proc.WorkingSetSize ? Math.round(proc.WorkingSetSize / 1024 / 1024) : 0,
+    parentId: parentId || null,
+    parentName: parent?.Name || '',
     isKnownGood,
     findings,
     score,
     threat,
+    visibilityLimited: !path,
+    infoCount,
   };
 }
 
-/* ── Main entry point ────────────────────────────────────────────────────── */
 async function scanProcessMemory() {
   const startedAt = Date.now();
 
   const rawProcs = await runPS(
     `Get-CimInstance Win32_Process | ` +
-    `Select-Object ProcessId,Name,Path,CommandLine,ParentProcessId,WorkingSetSize | ` +
+    `Select-Object ProcessId,Name,Path,ExecutablePath,CommandLine,ParentProcessId,WorkingSetSize | ` +
     `ConvertTo-Json -Depth 2 -Compress`
   );
 
-  if (!Array.isArray(rawProcs)) {
-    return { success: false, error: 'Could not enumerate processes — check PowerShell access.', processes: [], summary: null };
+  const processList = Array.isArray(rawProcs) ? rawProcs : rawProcs ? [rawProcs] : [];
+  if (processList.length === 0) {
+    return { success: false, error: 'Could not enumerate processes - check PowerShell access.', processes: [], summary: null };
   }
 
-  const results    = rawProcs.map((p) => assessProcess(p, rawProcs));
-  const critical   = results.filter((r) => r.threat === 'CRITICAL');
-  const suspicious = results.filter((r) => r.threat === 'SUSPICIOUS');
+  const results = processList.map((proc) => assessProcess(proc, processList));
+  const critical = results.filter((result) => result.threat === 'CRITICAL');
+  const suspicious = results.filter((result) => result.threat === 'SUSPICIOUS');
+  const infoOnly = results.filter((result) => result.threat === 'CLEAN' && result.infoCount > 0);
 
   const summary = {
-    total:      results.length,
-    critical:   critical.length,
+    total: results.length,
+    critical: critical.length,
     suspicious: suspicious.length,
-    clean:      results.length - critical.length - suspicious.length,
+    clean: results.length - critical.length - suspicious.length,
+    infoOnly: infoOnly.length,
     scanTimeMs: Date.now() - startedAt,
-    scannedAt:  new Date().toISOString(),
+    scannedAt: new Date().toISOString(),
   };
 
   const sorted = [
     ...critical,
     ...suspicious,
-    ...results.filter((r) => r.threat === 'CLEAN'),
+    ...infoOnly,
+    ...results.filter((result) => result.threat === 'CLEAN' && result.infoCount === 0),
   ];
 
   return { success: true, summary, processes: sorted };
 }
 
-module.exports = { scanProcessMemory };
+module.exports = {
+  assessProcess,
+  decodePowerShellEncodedCommand,
+  extractEncodedCommand,
+  scanProcessMemory,
+};

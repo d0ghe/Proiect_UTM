@@ -10,15 +10,14 @@ import {
   MemoryScanPage,
   LiveAlertsBanner,
   useLiveAlerts,
-  EntropyHeatmap,
   IocDisplay,
   PeDisplay,
   MitreChips,
 } from './IntelligencePages.jsx';
 
 const POLL_INTERVAL = 8000;
-const APP_NAME = 'U-Trust';
-const APP_TAGLINE = 'local trust control for endpoint defense';
+const APP_NAME = 'Argus';
+const APP_TAGLINE = 'endpoint defense command layer';
 const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE_CANDIDATES = Array.from(new Set([
   import.meta.env.VITE_API_BASE_URL,
@@ -35,7 +34,6 @@ const NAV_ITEMS = [
   { id: 'protection', label: 'Protection', icon: 'activity' },
   { id: 'mitre', label: 'MITRE ATT&CK', icon: 'crosshair' },
   { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
-  { id: 'signal', label: 'Signal', icon: 'broadcast' },
   { id: 'events', label: 'Events', icon: 'terminal' },
   { id: 'geoblocking', label: 'Geo-Block', icon: 'globe2' },
   { id: 'memory', label: 'Memory Scan', icon: 'cpu' },
@@ -505,7 +503,7 @@ function Sidebar({ active, onNavigate }) {
     <aside className="control-sidebar">
       <div className="sidebar-brand">
         <span className="brand-mark brand-mark--icon" aria-hidden="true">
-          <i className="bi bi-bezier2" />
+          <img className="brand-icon" src="/favicon.svg" alt="" />
         </span>
         <div className="brand-copy">
           <span className="brand-label">{APP_NAME}</span>
@@ -557,7 +555,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
       const blob = await response.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `u-trust-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `argus-report-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (err) {
@@ -571,7 +569,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
     <div className="page-content">
       <PageHeader
         breadcrumb={`${APP_NAME} / Overview`}
-        title="U-Trust Command Center"
+        title="Argus Command Center"
         subtitle="Runtime posture, active containment layers, provider findings, and machine health mapped into one operator workspace."
         action={(
           <>
@@ -798,7 +796,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
 
     const portNum = Number(form.port);
     if (!form.port || !Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
-      setSubmitError('Introdu un port valid între 1 și 65535.');
+      setSubmitError('Enter a valid port between 1 and 65535.');
       return;
     }
 
@@ -909,7 +907,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
 
             <div className="form-actions">
               <button className="control-btn control-btn--primary" disabled={isSubmitting || !form.port} type="submit">
-                {isSubmitting ? 'Se aplică…' : 'Add Rule'}
+                {isSubmitting ? 'Applying...' : 'Add Rule'}
               </button>
             </div>
           </form>
@@ -925,8 +923,8 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rule
             <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>{rules.length} rule{rules.length !== 1 ? 's' : ''}</span>
           </div>
 
-          {loading && rules.length === 0 ? <EmptyState text="Se încarcă regulile…" /> : null}
-          {!loading && rules.length === 0 ? <EmptyState text="Nicio regulă configurată." /> : null}
+          {loading && rules.length === 0 ? <EmptyState text="Loading rules..." /> : null}
+          {!loading && rules.length === 0 ? <EmptyState text="No rules configured." /> : null}
 
           {rules.length > 0 ? (
             <div className="table-wrap">
@@ -1030,7 +1028,7 @@ function DeepAnalysisPanel({ deepAnalysis }) {
               ))}
             </ul>
           ) : (
-            <p className="deep-card__empty">Niciun semnal de risc.</p>
+            <p className="deep-card__empty">No risk signals.</p>
           )}
         </div>
 
@@ -1054,14 +1052,14 @@ function DeepAnalysisPanel({ deepAnalysis }) {
             ))}
           </div>
           <p className="deep-card__note">
-            {Math.round((entropyResult?.highEntropyRatio || 0) * 100)}% blocuri cu entropie &gt; 7.0
+            {Math.round((entropyResult?.highEntropyRatio || 0) * 100)}% of blocks have entropy &gt; 7.0
           </p>
         </div>
 
         {/* MODUL 3: Evasion Technique Detection */}
         <div className="deep-card">
           <p className="deep-card__title">3. Evasion Detection</p>
-          <p className="deep-card__metric">{indicators.length}<span> indicator{indicators.length === 1 ? '' : 'i'}</span></p>
+          <p className="deep-card__metric">{indicators.length}<span> indicator{indicators.length === 1 ? '' : 's'}</span></p>
           {indicators.length > 0 ? (
             <div className="deep-card__chips">
               {indicators.map((ind, idx) => (
@@ -1075,7 +1073,7 @@ function DeepAnalysisPanel({ deepAnalysis }) {
               ))}
             </div>
           ) : (
-            <p className="deep-card__empty">Nicio tehnică de evaziune detectată.</p>
+            <p className="deep-card__empty">No evasion techniques detected.</p>
           )}
         </div>
 
@@ -1083,16 +1081,16 @@ function DeepAnalysisPanel({ deepAnalysis }) {
         <div className="deep-card">
           <p className="deep-card__title">4. Sub-byte Injection</p>
           <p className="deep-card__metric">
-            {codeCaves.length + appended.length + polyglot.length}<span> hit{codeCaves.length + appended.length + polyglot.length === 1 ? '' : 'uri'}</span>
+            {codeCaves.length + appended.length + polyglot.length}<span> hit{codeCaves.length + appended.length + polyglot.length === 1 ? '' : 's'}</span>
           </p>
           {codeCaves.length > 0 ? (
             <p className="deep-card__note">
-              <strong>{codeCaves.length}</strong> code cave(uri) — max {codeCaves[0]?.size} octeți @ {codeCaves[0]?.offsetHex}
+              <strong>{codeCaves.length}</strong> code cave{codeCaves.length === 1 ? '' : 's'} - max {codeCaves[0]?.size} bytes @ {codeCaves[0]?.offsetHex}
             </p>
           ) : null}
           {appended.length > 0 ? (
             <p className="deep-card__note">
-              <strong>{appended.length}</strong> payload(uri) după EOF: {appended.map((a) => a.type).join(', ')}
+              <strong>{appended.length}</strong> payload{appended.length === 1 ? '' : 's'} after EOF: {appended.map((a) => a.type).join(', ')}
             </p>
           ) : null}
           {polyglot.length > 0 ? (
@@ -1101,7 +1099,7 @@ function DeepAnalysisPanel({ deepAnalysis }) {
             </p>
           ) : null}
           {codeCaves.length + appended.length + polyglot.length === 0 ? (
-            <p className="deep-card__empty">Nicio injecție sub-byte detectată.</p>
+            <p className="deep-card__empty">No sub-byte injection detected.</p>
           ) : null}
         </div>
       </div>
@@ -1410,13 +1408,6 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
               ) : null}
 
               <DeepAnalysisPanel deepAnalysis={result.deepAnalysis} />
-
-              {result.deepAnalysis?.entropyResult?.blocks?.length > 0 ? (
-                <div className="heatmap-row">
-                  <span className="panel-kicker">Entropy Heatmap (per 4KB block)</span>
-                  <EntropyHeatmap blocks={result.deepAnalysis.entropyResult.blocks} />
-                </div>
-              ) : null}
 
               <MitreChips techniques={result.mitreTechniques} />
               <IocDisplay iocs={result.iocs} />
@@ -2021,181 +2012,6 @@ function ControlsPage({ data, error, loading, onRefresh, onToggle, savingKey }) 
   );
 }
 
-function SnrBar({ snr, thresholds }) {
-  const max = 35;
-  const pct = Math.max(0, Math.min(100, (snr / max) * 100));
-  const color = snr > (thresholds?.primary || 20)
-    ? 'var(--accent-green)'
-    : snr > (thresholds?.fallback || 10)
-      ? 'var(--accent-amber)'
-      : 'var(--accent-red)';
-
-  return (
-    <div className="snr-bar-wrap">
-      <div className="snr-bar-track">
-        <div className="snr-bar-fill" style={{ width: `${pct}%`, background: color }} />
-        <div className="snr-bar-marker" style={{ left: `${((thresholds?.primary || 20) / max) * 100}%` }} title="Primary threshold" />
-        <div className="snr-bar-marker snr-bar-marker--amber" style={{ left: `${((thresholds?.fallback || 10) / max) * 100}%` }} title="Fallback threshold" />
-      </div>
-      <div className="snr-bar-labels">
-        <span>0 dB</span>
-        <span className="snr-value">{snr.toFixed(1)} dB</span>
-        <span>35 dB</span>
-      </div>
-    </div>
-  );
-}
-
-function SignalPage({ data, error, loading, onInjectNoise, onRefresh, onReset }) {
-  const signal = data?.signal || null;
-  const activityLog = data?.activityLog || {};
-  const recentActivity = Array.isArray(activityLog.recent) ? activityLog.recent : [];
-  const summary = activityLog.summary || {};
-  const mode = signal?.mode || null;
-
-  return (
-    <div className="page-content">
-      <PageHeader
-        breadcrumb={`${APP_NAME} / Signal`}
-        title="Signal &amp; Communications"
-        subtitle="Monitorizare SNR în timp real, fallback automat LoRa/GSM și istoricul activității sistemului."
-        action={(
-          <>
-            <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">
-              Refresh
-            </button>
-            <button className="control-btn control-btn--amber" onClick={onInjectNoise} type="button">
-              Inject Noise
-            </button>
-            <button className="control-btn" onClick={onReset} type="button">
-              Reset Signal
-            </button>
-          </>
-        )}
-      />
-
-      <div className="panel-grid panel-grid--stats">
-        <StatCard
-          accent={signal?.mode?.color === 'green' ? 'green' : signal?.mode?.color === 'red' ? 'red' : 'amber'}
-          label="SNR"
-          value={signal ? `${signal.snr.toFixed(1)} dB` : '-'}
-          meta={signal?.quality || '-'}
-        />
-        <StatCard accent="neutral" label="Channel Mode" value={mode?.label || '-'} />
-        <StatCard accent="neutral" label="Technology" value={mode?.technology || '-'} />
-        <StatCard accent="neutral" label="Band" value={mode?.band || '-'} />
-        <StatCard accent="red" label="Alerts" value={formatInteger(summary.alerts)} />
-        <StatCard accent="amber" label="Warnings" value={formatInteger(summary.warnings)} />
-      </div>
-
-      {error ? <p className="form-message form-message--error">{error}</p> : null}
-      {loading && !data ? <EmptyState text="Loading signal data..." /> : null}
-
-      {signal ? (
-        <div className="panel-grid panel-grid--split">
-          <section className="panel-card">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Canal de Comunicație</p>
-                <h3>SNR Monitor</h3>
-              </div>
-              <StatusBadge value={mode?.fallbackActive ? 'LoRa Active' : mode?.id === 'degraded' ? 'Degraded' : 'Online'} />
-            </div>
-
-            <SnrBar snr={signal.snr} thresholds={signal.thresholds} />
-
-            <div className="detail-grid" style={{ marginTop: '1rem' }}>
-              <DataPair label="SNR Curent" value={`${signal.snr.toFixed(1)} dB`} />
-              <DataPair label="Calitate" value={signal.quality} />
-              <DataPair label="Prag Primar" value={`> ${signal.thresholds.primary} dB`} />
-              <DataPair label="Prag Fallback" value={`< ${signal.thresholds.fallback} dB`} />
-              <DataPair label="Poll-uri" value={formatInteger(signal.ticks)} />
-              <DataPair label="Ultima actualizare" value={formatDateTime(signal.lastUpdateAt)} />
-            </div>
-          </section>
-
-          <section className="panel-card">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Fallback Mechanism</p>
-                <h3>Canal Activ</h3>
-              </div>
-            </div>
-
-            <div className={`signal-channel-card signal-channel-card--${mode?.color || 'neutral'}`}>
-              <div className="signal-channel-icon">
-                <i className={`bi bi-${mode?.id === 'lora' ? 'reception-4' : mode?.id === 'degraded' ? 'reception-2' : 'wifi'}`} />
-              </div>
-              <div>
-                <h4>{mode?.label}</h4>
-                <p className="module-desc">{mode?.description}</p>
-                <div className="provider-chip-row" style={{ marginTop: '0.5rem' }}>
-                  <span className="meta-chip">{mode?.technology}</span>
-                  <span className="meta-chip">{mode?.band}</span>
-                  {mode?.fallbackActive ? <span className="meta-chip meta-chip--alert">OUT-OF-BAND</span> : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="detail-grid" style={{ marginTop: '1rem' }}>
-              <DataPair
-                label="Status LoRa"
-                value={mode?.fallbackActive ? 'Activ' : signal.loraDeactivatedAt ? 'Dezactivat' : 'Inactiv'}
-              />
-              <DataPair
-                label="Ultima sesiune LoRa"
-                value={
-                  signal.loraActivatedAt
-                    ? formatDateTime(signal.loraActivatedAt)
-                    : signal.loraDeactivatedAt
-                    ? formatDateTime(signal.loraDeactivatedAt)
-                    : 'Niciodată activat'
-                }
-              />
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      <section className="panel-card page-section-gap">
-        <div className="panel-card__header">
-          <div>
-            <p className="panel-kicker">Istoric Detaliat</p>
-            <h3>Activity Log</h3>
-          </div>
-          <div className="provider-chip-row">
-            <span className="meta-chip meta-chip--alert">ALERT: {formatInteger(summary.alerts)}</span>
-            <span className="meta-chip">WARN: {formatInteger(summary.warnings)}</span>
-            <span className="meta-chip">INFO: {formatInteger(summary.info)}</span>
-          </div>
-        </div>
-
-        {recentActivity.length === 0 ? <EmptyState text="Nicio activitate înregistrată încă. Fă o scanare pentru a popula logul." /> : null}
-
-        {recentActivity.length > 0 ? (
-          <div className="stack-list">
-            {recentActivity.map((entry) => (
-              <article className="event-card" key={entry.id}>
-                <div className="event-card__top">
-                  <div className="event-card__title">
-                    <p className="panel-kicker">{entry.source}</p>
-                    <h3>{entry.action}</h3>
-                  </div>
-                  <span className={`severity-pill ${entry.level === 'ALERT' ? 'severity-pill--critical' : entry.level === 'WARNING' ? 'severity-pill--warning' : 'severity-pill--info'}`}>
-                    {entry.level}
-                  </span>
-                </div>
-                <p className="event-card__detail">{entry.detail}</p>
-                <p className="event-card__time">{formatDateTime(entry.timestamp)}</p>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
-    </div>
-  );
-}
-
 import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
@@ -2428,6 +2244,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
   const selectedWithSource = data.blockedCountries || [];
   const syncStatus = data.syncStatus || {};
   const totalDomains = Object.values(syncStatus).reduce((acc, s) => acc + (s?.count || 0), 0);
+  const enforcementActive = Boolean(data.enabled && selected.size > 0);
 
   return (
     <div className="page-content">
@@ -2549,7 +2366,13 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>
-            Geo-Filter {data.enabled ? <span style={{ color: '#34c759' }}>Active</span> : <span style={{ color: '#636366' }}>Inactive</span>}
+            Geo-Filter {enforcementActive ? (
+              <span style={{ color: '#34c759' }}>Active</span>
+            ) : data.enabled ? (
+              <span style={{ color: '#f5a623' }}>No countries selected</span>
+            ) : (
+              <span style={{ color: '#636366' }}>Inactive</span>
+            )}
           </div>
           <div style={{ fontSize: '0.8rem', color: '#636366', marginTop: '0.2rem' }}>
             {selected.size} {selected.size === 1 ? 'country' : 'countries'} selected
@@ -2669,7 +2492,6 @@ export default function App() {
   })();
   const { alerts: liveAlerts } = useLiveAlerts(wsUrl);
   const [controlsData, setControlsData] = useState({ controls: null, loading: false, savingKey: '', error: '' });
-  const [signalData, setSignalData] = useState({ data: null, loading: false, error: '' });
   const [contentFilterData, setContentFilterData] = useState({
     policy: null,
     categories: [],
@@ -2704,7 +2526,7 @@ export default function App() {
     setBackendRestartMessage('Restarting backend...');
 
     try {
-      const response = await fetch('/__utrust/restart-backend', {
+      const response = await fetch('/__argus/restart-backend', {
         method: 'POST',
         headers: { Accept: 'application/json' },
       });
@@ -2908,30 +2730,6 @@ export default function App() {
       setControlsData((current) => ({ ...current, loading: false, error: error.message || 'Could not load controls.' }));
     }
   }, []);
-
-  const loadSignal = useCallback(async () => {
-    setSignalData((current) => ({ ...current, loading: true, error: '' }));
-    try {
-      const payload = await requestJson('/signal');
-      setSignalData({ data: payload, loading: false, error: '' });
-    } catch (error) {
-      setSignalData((current) => ({ ...current, loading: false, error: error.message || 'Could not load signal data.' }));
-    }
-  }, []);
-
-  const handleInjectNoise = useCallback(async () => {
-    try {
-      await requestJson('/signal/inject-noise', { method: 'POST' });
-      await loadSignal();
-    } catch { /* ignore */ }
-  }, [loadSignal]);
-
-  const handleResetSignal = useCallback(async () => {
-    try {
-      await requestJson('/signal/reset', { method: 'POST' });
-      await loadSignal();
-    } catch { /* ignore */ }
-  }, [loadSignal]);
 
   const loadContentFilter = useCallback(async () => {
     setContentFilterData((current) => ({ ...current, loading: true, error: '', message: '' }));
@@ -3264,15 +3062,6 @@ export default function App() {
   }, [fetchDashboard]);
 
   useEffect(() => {
-    if (activePage !== 'signal') {
-      return undefined;
-    }
-
-    const signalInterval = setInterval(loadSignal, 3000);
-    return () => clearInterval(signalInterval);
-  }, [activePage, loadSignal]);
-
-  useEffect(() => {
     if (activePage === 'firewall') {
       loadFirewall();
     }
@@ -3317,14 +3106,10 @@ export default function App() {
       loadContentFilter();
     }
 
-    if (activePage === 'signal') {
-      loadSignal();
-    }
-
     if (activePage === 'geoblocking') {
       loadGeoFilter();
     }
-  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadGeoFilter, loadProtection, loadSignal, loadTelemetry, loadMitre, loadIntel, loadHoneypots, loadRules]);
+  }, [activePage, loadCleanup, loadContentFilter, loadControls, loadEvents, loadFirewall, loadGeoFilter, loadProtection, loadTelemetry, loadMitre, loadIntel, loadHoneypots, loadRules]);
 
   return (
     <div className="control-app">
@@ -3408,16 +3193,6 @@ export default function App() {
         ) : null}
         {activePage === 'telemetry' ? (
           <TelemetryPage data={telemetryData.data} error={telemetryData.error} loading={telemetryData.loading} onRefresh={loadTelemetry} />
-        ) : null}
-        {activePage === 'signal' ? (
-          <SignalPage
-            data={signalData.data}
-            error={signalData.error}
-            loading={signalData.loading}
-            onInjectNoise={handleInjectNoise}
-            onRefresh={loadSignal}
-            onReset={handleResetSignal}
-          />
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
         {activePage === 'geoblocking' ? (

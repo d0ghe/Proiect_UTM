@@ -136,7 +136,7 @@ function fetchWithTimeout(url, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, {
     signal: controller.signal,
-    headers: { 'User-Agent': 'U-Trust-Core/1.0', Accept: 'text/plain' },
+    headers: { 'User-Agent': 'Argus-Core/1.0', Accept: 'text/plain' },
   }).finally(() => clearTimeout(timer));
 }
 
@@ -316,15 +316,43 @@ function isDomainInCountrySet(hostname, country) {
 }
 
 /* ── TLD-based fallback ────────────────────────────────────────────────────── */
-const TLD_MAP = { cn:'CN', ru:'RU', su:'RU', ir:'IR', kp:'KP', cu:'CU', by:'BY', sy:'SY', vn:'VN' };
+const TLD_MAP = {
+  ...Object.fromEntries(Object.keys(COUNTRY_COORDS).map((country) => [country.toLowerCase(), country])),
+  su: 'RU',
+  uk: 'GB',
+};
+
+function normalizeHostname(value) {
+  let hostname = String(value || '').trim();
+  if (!hostname) return '';
+
+  try {
+    hostname = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(hostname) ? hostname : `http://${hostname}`).hostname;
+  } catch {
+    hostname = hostname
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  return hostname
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .replace(/\.+$/, '')
+    .toLowerCase();
+}
 
 function countryFromTld(hostname) {
-  const tld = hostname.split('.').pop().toLowerCase();
+  const normalized = normalizeHostname(hostname);
+  const tld = normalized.split('.').pop().toLowerCase();
   return TLD_MAP[tld] || null;
 }
 
 /* ── DNS → toate IP-urile ──────────────────────────────────────────────────── */
 async function resolveAllIps(hostname) {
+  hostname = normalizeHostname(hostname);
+  if (!hostname) return [];
+  if (net.isIP(hostname)) return [hostname];
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return [hostname];
   const cached = dnsCache.get(hostname);
   if (cached && Date.now() - cached.ts < DNS_CACHE_TTL) return cached.ips;
@@ -487,6 +515,8 @@ async function getGeoConnections(limit = 120) {
 
 /* ── getCountry (pentru route /check) ─────────────────────────────────────── */
 async function getCountry(hostname) {
+  hostname = normalizeHostname(hostname);
+  if (!hostname) return null;
   const tld = countryFromTld(hostname);
   if (tld) return tld;
   const ips = await resolveAllIps(hostname);
@@ -499,6 +529,9 @@ async function getCountry(hostname) {
 
 /* ── Verificare principala ─────────────────────────────────────────────────── */
 async function isGeoBlocked(hostname) {
+  hostname = normalizeHostname(hostname);
+  if (!hostname) return { blocked: false };
+
   const state = getGeoFilterState();
   if (!state.enabled || state.blockedCountries.length === 0) return { blocked: false };
 
@@ -509,7 +542,7 @@ async function isGeoBlocked(hostname) {
   for (const country of state.blockedCountries) {
     if (isDomainInCountrySet(hostname, country)) {
       addAttack('geo', country, hostname, null);
-      return { blocked: true, country };
+      return { blocked: true, country, reason: 'domain-list' };
     }
   }
 
@@ -517,7 +550,7 @@ async function isGeoBlocked(hostname) {
   const tldCountry = countryFromTld(hostname);
   if (tldCountry && state.blockedCountries.includes(tldCountry)) {
     addAttack('geo', tldCountry, hostname, null);
-    return { blocked: true, country: tldCountry };
+    return { blocked: true, country: tldCountry, reason: 'country-tld' };
   }
 
   // Strat 3: IP-based — toate A record-urile (fallback pentru restul)
@@ -527,7 +560,7 @@ async function isGeoBlocked(hostname) {
     if (!geo?.country) continue;
     if (state.blockedCountries.includes(geo.country)) {
       addAttack('geo', geo.country, hostname, geo);
-      return { blocked: true, country: geo.country };
+      return { blocked: true, country: geo.country, reason: 'ip-geolocation', ip };
     }
   }
 
@@ -537,5 +570,5 @@ async function isGeoBlocked(hostname) {
 module.exports = {
   isGeoBlocked, getCountry, getRecentAttacks, addContentBlock,
   syncCountryDomains, initCountryDomains, getCountrySyncStatus, getGeoConnections, COUNTRY_SOURCES,
-  parseV2flyDomains,
+  parseV2flyDomains, normalizeHostname, countryFromTld,
 };

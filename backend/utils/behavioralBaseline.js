@@ -102,7 +102,7 @@ function recordSample(sample) {
         anomalies.push({
           type: 'new_process',
           severity: 'warning',
-          detail: `Proces nou observat: ${proc}`,
+          detail: `New process observed: ${proc}`,
           at: new Date().toISOString(),
         });
       }
@@ -120,7 +120,7 @@ function recordSample(sample) {
         anomalies.push({
           type: 'new_connection',
           severity: 'warning',
-          detail: `Conexiune nouă pe ${key}`,
+          detail: `New connection on ${key}`,
           at: new Date().toISOString(),
         });
       }
@@ -138,7 +138,7 @@ function recordSample(sample) {
         anomalies.push({
           type: 'cpu_spike',
           severity: 'critical',
-          detail: `CPU ${sample.cpuPercent.toFixed(1)}% la ora ${hour}:00 — z-score ${z.toFixed(2)} (medie ${cpuStats.mean.toFixed(1)}±${std.toFixed(1)})`,
+          detail: `CPU ${sample.cpuPercent.toFixed(1)}% at ${hour}:00 - z-score ${z.toFixed(2)} (mean ${cpuStats.mean.toFixed(1)}+/-${std.toFixed(1)})`,
           at: new Date().toISOString(),
         });
       }
@@ -152,7 +152,7 @@ function recordSample(sample) {
         anomalies.push({
           type: 'ram_spike',
           severity: 'warning',
-          detail: `RAM ${sample.ramPercent.toFixed(1)}% la ora ${hour}:00 — z-score ${z.toFixed(2)}`,
+          detail: `RAM ${sample.ramPercent.toFixed(1)}% at ${hour}:00 - z-score ${z.toFixed(2)}`,
           at: new Date().toISOString(),
         });
       }

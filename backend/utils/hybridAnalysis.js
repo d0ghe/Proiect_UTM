@@ -716,7 +716,7 @@ function createHybridAnalysisClient({
 
     const headers = {
       Accept: 'application/json',
-      'User-Agent': 'U-Trust-Core/1.0',
+      'User-Agent': 'Argus-Core/1.0',
       'api-key': config.apiKey,
       ...(options.headers || {}),
     };

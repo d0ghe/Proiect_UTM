@@ -146,7 +146,7 @@ function parsePE(buffer) {
       anomalies.push({
         severity: 'critical',
         section: section.name,
-        description: `Secțiune cu permisiuni WRITE+EXECUTE (${section.permissions}) — indicator de cod auto-modificabil sau injecție.`,
+        description: `Section with WRITE+EXECUTE permissions (${section.permissions}) - indicator of self-modifying code or injection.`,
       });
     }
 
@@ -155,7 +155,7 @@ function parsePE(buffer) {
       anomalies.push({
         severity: 'warning',
         section: section.name,
-        description: `Nume secțiune non-standard: "${name}" — packer-ele și malware-ul folosesc des nume custom.`,
+        description: `Non-standard section name: "${name}" - packers and malware often use custom names.`,
       });
     }
 
@@ -163,7 +163,7 @@ function parsePE(buffer) {
       anomalies.push({
         severity: 'warning',
         section: section.name,
-        description: `Secțiune executabilă fără date raw — posibil cod allocat la runtime (unpacking).`,
+        description: 'Executable section without raw data - possible runtime-allocated code (unpacking).',
       });
     }
   }
@@ -177,13 +177,13 @@ function parsePE(buffer) {
       anomalies.push({
         severity: 'critical',
         section: epSection.name,
-        description: `Entry point 0x${entryPoint.toString(16)} este în secțiune non-executabilă "${epSection.name}".`,
+        description: `Entry point 0x${entryPoint.toString(16)} is inside non-executable section "${epSection.name}".`,
       });
     } else if (!epSection) {
       anomalies.push({
         severity: 'warning',
         section: 'header',
-        description: `Entry point 0x${entryPoint.toString(16)} nu se află în nicio secțiune mapată.`,
+        description: `Entry point 0x${entryPoint.toString(16)} is not inside any mapped section.`,
       });
     }
   }
@@ -196,7 +196,7 @@ function parsePE(buffer) {
       anomalies.push({
         severity: 'warning',
         section: 'header',
-        description: `Timestamp build suspicious: ${date.toISOString()} (an ${year}).`,
+        description: `Suspicious build timestamp: ${date.toISOString()} (year ${year}).`,
       });
     }
   }

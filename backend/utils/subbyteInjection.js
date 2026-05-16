@@ -65,7 +65,7 @@ function detectCodeCaves(fileBuffer) {
             offsetHex: `0x${start.toString(16).toUpperCase()}`,
             size: len,
             byteValue: target === 0x00 ? 'NULL (0x00)' : 'FF (0xFF)',
-            description: `Code cave de ${len} octeți (${target === 0x00 ? '0x00' : '0xFF'}) la offset 0x${start.toString(16).toUpperCase()} — posibil spațiu pentru shellcode.`,
+            description: `Code cave of ${len} bytes (${target === 0x00 ? '0x00' : '0xFF'}) at offset 0x${start.toString(16).toUpperCase()} - possible shellcode space.`,
           });
         }
         start = -1;
@@ -79,7 +79,7 @@ function detectCodeCaves(fileBuffer) {
         offsetHex: `0x${start.toString(16).toUpperCase()}`,
         size: len,
         byteValue: target === 0x00 ? 'NULL (0x00)' : 'FF (0xFF)',
-        description: `Code cave de ${len} octeți (${target === 0x00 ? '0x00' : '0xFF'}) la end-of-file.`,
+        description: `Code cave of ${len} bytes (${target === 0x00 ? '0x00' : '0xFF'}) at end-of-file.`,
       });
     }
   }
@@ -112,7 +112,7 @@ function detectAppendAfterEOF(fileBuffer) {
         eofOffset: idx,
         eofOffsetHex: `0x${idx.toString(16).toUpperCase()}`,
         bytesAfter,
-        description: `${bytesAfter} octeți găsiți după markeru ${marker.name} la 0x${idx.toString(16).toUpperCase()} — posibil payload ascuns.`,
+        description: `${bytesAfter} bytes found after ${marker.name} marker at 0x${idx.toString(16).toUpperCase()} - possible hidden payload.`,
       });
     }
   }
@@ -144,7 +144,7 @@ function detectPolyglot(fileBuffer) {
     return [{
       formats: detected,
       severity: 'warning',
-      description: `Fișier polyglot detectat — valid ca: ${detected.join(' + ')}. Posibilă confuzie intenționată a filtrelor.`,
+      description: `Polyglot file detected - valid as: ${detected.join(' + ')}. Possible intentional filter confusion.`,
     }];
   }
 

@@ -129,17 +129,24 @@ body::before { display: none !important; }
 }
 
 .brand-mark {
-  width: 26px !important;
-  height: 26px !important;
-  background: var(--accent) !important;
-  border-radius: var(--radius-sm) !important;
+  width: 34px !important;
+  height: 34px !important;
+  background: transparent !important;
+  border-radius: 0 !important;
   border: none !important;
   display: flex !important;
   align-items: center;
   justify-content: center;
   color: #fff !important;
   font-size: 13px !important;
-  box-shadow: none !important;
+  box-shadow: 0 0 18px rgba(0, 216, 255, 0.16) !important;
+}
+
+.brand-icon {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  object-fit: contain !important;
 }
 
 .brand-label {
@@ -2071,9 +2078,9 @@ body { background-image: none !important; }
 
 /* Brand-mark — solid blue, no orange/blue gradient */
 .brand-mark {
-  background: var(--accent) !important;
+  background: transparent !important;
   background-image: none !important;
-  box-shadow: none !important;
+  box-shadow: 0 0 18px rgba(0, 216, 255, 0.16) !important;
   color: #fff !important;
 }
 
@@ -2208,34 +2215,15 @@ body,
 }
 
 .analysis-result-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, clamp(280px, 30vw, 380px));
-  align-items: start;
-  gap: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
   width: 100%;
 }
 
-.analysis-result-main > .provider-chip-row {
-  grid-column: 1 / -1;
-}
-
-.analysis-result-main > .hex-match-row,
-.analysis-result-main > .heatmap-row,
-.analysis-result-main > .ioc-block,
-.analysis-result-main > .form-actions {
-  grid-column: 1;
-}
-
-.analysis-result-main > .deep-analysis,
-.analysis-result-main > .mitre-chips,
-.analysis-result-main > .pe-block,
-.analysis-result-main > .analysis-inline-grid,
-.analysis-result-main > .analysis-job-card {
-  grid-column: 2;
-}
-
-.analysis-result-main > .deep-analysis {
-  margin-top: 0 !important;
+.analysis-result-main > * {
+  width: 100%;
 }
 
 .provider-chip-row,
@@ -2294,7 +2282,7 @@ body,
 }
 
 .deep-analysis__grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)) !important;
 }
 
 .deep-card {

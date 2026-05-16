@@ -51,26 +51,26 @@ function buildPolicyPatch(body = {}) {
 
 function buildApplyRuntimeMessage(result) {
   if (result.applied) {
-    return `${result.appliedDomainCount} domenii blocate prin proxy local.`;
+    return `${result.appliedDomainCount} domains blocked through the local proxy.`;
   }
 
   if ((result.domains?.length || 0) > 0) {
-    return 'Politica este compilata, dar proxy-ul browser este dezactivat.';
+    return 'The policy is compiled, but the browser proxy is disabled.';
   }
 
-  return 'Nicio categorie selectata - blocarea a fost dezactivata.';
+  return 'No category selected - blocking has been disabled.';
 }
 
 function buildApplyResponseMessage(result) {
   if (result.applied) {
-    return `Blocare activa: ${result.appliedDomainCount} domenii.`;
+    return `Active blocking: ${result.appliedDomainCount} domains.`;
   }
 
   if ((result.domains?.length || 0) > 0) {
-    return 'Blocarea nu a fost aplicata deoarece proxy-ul browser este dezactivat.';
+    return 'Blocking was not applied because the browser proxy is disabled.';
   }
 
-  return 'Nicio categorie selectata.';
+  return 'No category selected.';
 }
 
 function countSyncedFeeds(result) {

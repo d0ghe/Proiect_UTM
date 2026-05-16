@@ -7,6 +7,7 @@ const {
   getGeoConnections,
   getRecentAttacks,
   initCountryDomains,
+  isGeoBlocked,
   syncCountryDomains,
   getCountrySyncStatus,
 } = require('../utils/geoFilter');
@@ -48,10 +49,18 @@ router.post('/check', async (req, res) => {
   try {
     const hostname = String(req.body?.hostname || '').trim();
     if (!hostname) return res.status(400).json({ success: false, message: 'hostname required' });
-    const country = await getCountry(hostname);
     const state = getGeoFilterState();
-    const blocked = state.enabled && !!country && state.blockedCountries.includes(country);
-    res.json({ success: true, hostname, country, blocked });
+    const geo = await isGeoBlocked(hostname);
+    const country = geo.country || await getCountry(hostname);
+    res.json({
+      success: true,
+      hostname,
+      country,
+      blocked: Boolean(geo.blocked),
+      reason: geo.reason || '',
+      ip: geo.ip || '',
+      enforcementActive: state.enabled && state.blockedCountries.length > 0,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

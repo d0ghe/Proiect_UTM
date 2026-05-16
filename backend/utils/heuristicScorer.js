@@ -142,10 +142,10 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
     breakdown.hexSignatures = hexScore;
 
     if (criticalHex > 0) {
-      reasons.push(`${criticalHex} semnătură(i) hex critică(e) (shellcode/EICAR)`);
+      reasons.push(`${criticalHex} critical hex signature(s) (shellcode/EICAR)`);
     }
     if (warningHex > 0) {
-      reasons.push(`${warningHex} header(e) binar(e) suspecte sau embedded (ELF/OLE2/PE in body)`);
+      reasons.push(`${warningHex} suspicious or embedded binary header(s) (ELF/OLE2/PE in body)`);
     }
   }
 
@@ -155,15 +155,15 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
 
     if (entropyResult.verdict === 'likely_encrypted_or_packed') {
       entropyScore = 25;
-      reasons.push(`Entropie Shannon foarte ridicată (${entropyResult.overall}/8.0) — probabil criptat/packed`);
+      reasons.push(`Very high Shannon entropy (${entropyResult.overall}/8.0) - likely encrypted or packed`);
     } else if (entropyResult.verdict === 'suspicious_high_entropy') {
       entropyScore = 10;
-      reasons.push(`Entropie Shannon ridicată (${entropyResult.overall}/8.0)`);
+      reasons.push(`High Shannon entropy (${entropyResult.overall}/8.0)`);
     }
 
     if (entropyResult.highEntropyRatio > 0.6) {
       entropyScore += 10;
-      reasons.push(`${Math.round(entropyResult.highEntropyRatio * 100)}% din blocuri au entropie > 7.0`);
+      reasons.push(`${Math.round(entropyResult.highEntropyRatio * 100)}% of blocks have entropy > 7.0`);
     }
 
     score += Math.min(entropyScore, 30);
@@ -178,16 +178,16 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
 
     for (const ind of evasionIndicators) {
       if (ind.category === 'dangerous_imports') {
-        reasons.push(`${ind.matches.length} import(uri) API cu utilizare duala (injectie/retea/keylog)`);
+        reasons.push(`${ind.matches.length} dual-use API import(s) (injection/network/keylogging)`);
       }
       if (ind.category === 'anti_debug') {
-        reasons.push(`Tehnici anti-debug detectate (${ind.matches.length} API-uri)`);
+        reasons.push(`Anti-debug techniques detected (${ind.matches.length} APIs)`);
       }
       if (ind.category === 'anti_vm') {
-        reasons.push(`Indicatori anti-VM/sandbox (${ind.matches.length} string-uri)`);
+        reasons.push(`Anti-VM/sandbox indicators (${ind.matches.length} strings)`);
       }
       if (ind.category === 'packer') {
-        reasons.push(`Packer detectat: ${ind.matches.join(', ')}`);
+        reasons.push(`Packer detected: ${ind.matches.join(', ')}`);
       }
     }
   }
@@ -201,14 +201,14 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
     const codeCaveReasonThreshold = isPortableExecutable ? 65536 : 1024;
     const largeCaves = codeCaves.filter((c) => c.size > codeCaveReasonThreshold).length;
     if (largeCaves > 0) {
-      reasons.push(`${largeCaves} code cave(uri) mari (>${Math.round(codeCaveReasonThreshold / 1024)}KB) - posibil shellcode ascuns`);
+      reasons.push(`${largeCaves} large code cave(s) (>${Math.round(codeCaveReasonThreshold / 1024)}KB) - possible hidden shellcode`);
     }
     if (scoredAppendedPayloads.length > 0) {
-      reasons.push(`Conținut detectat după EOF (${scoredAppendedPayloads.map((p) => p.type).join(', ')})`);
+      reasons.push(`Content detected after EOF (${scoredAppendedPayloads.map((p) => p.type).join(', ')})`);
     }
     if (polyglot.length > 0) {
       const formats = polyglot[0]?.formats || [];
-      reasons.push(`Fișier polyglot: ${formats.join(' + ')}`);
+      reasons.push(`Polyglot file: ${formats.join(' + ')}`);
     }
   }
 
@@ -220,10 +220,10 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
     const criticalAnomalies = (peResult.anomalies || []).filter((item) => item.severity === 'critical').length;
     const warningAnomalies = (peResult.anomalies || []).filter((item) => item.severity === 'warning').length;
     if (criticalAnomalies > 0) {
-      reasons.push(`${criticalAnomalies} anomalie(i) PE criticÄƒ(e)`);
+      reasons.push(`${criticalAnomalies} critical PE anomal${criticalAnomalies === 1 ? 'y' : 'ies'}`);
     }
     if (warningAnomalies > 0) {
-      reasons.push(`${warningAnomalies} anomalie(i) PE de revizuit`);
+      reasons.push(`${warningAnomalies} PE anomal${warningAnomalies === 1 ? 'y' : 'ies'} to review`);
     }
   }
 

@@ -194,7 +194,7 @@ let _blockedDomains = new Set();
 
 function setBlockedDomains(domains) {
   _blockedDomains = new Set(Array.isArray(domains) ? domains.map((d) => d.toLowerCase()) : []);
-  console.log(`[+] Content filter proxy cache: ${_blockedDomains.size} domenii blocate.`);
+  console.log(`[+] Content filter proxy cache: ${_blockedDomains.size} blocked domains.`);
 }
 
 function isDomainBlocked(hostname) {

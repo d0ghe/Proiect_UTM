@@ -92,7 +92,7 @@ export default function ContentFilterPage({
     <div className="page-content content-filter-page">
       <div className="page-header page-header--atlas">
         <div>
-          <p className="page-breadcrumb">U-Trust / Policy Mesh</p>
+          <p className="page-breadcrumb">Argus / Policy Mesh</p>
           <h1 className="page-title">Content Filtering</h1>
           <p className="page-subtitle">
             Build a local proxy policy for adult content, ads, malware, gambling, social media, and custom domains.
@@ -149,7 +149,7 @@ export default function ContentFilterPage({
 
           <div className="atlas-hero-copy">
             <p className="module-desc">
-              This policy is enforced by the U-Trust local browser proxy. Domain lists stay in memory and requests are blocked before
+              This policy is enforced by the Argus local browser proxy. Domain lists stay in memory and requests are blocked before
               HTTP or HTTPS connections are opened.
             </p>
 
