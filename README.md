@@ -1,13 +1,13 @@
 # U-Trust
 
-U-Trust is a local security platform with a dashboard for system telemetry, hosts-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
+U-Trust is a local security platform with a dashboard for system telemetry, proxy-based content filtering, antivirus workflows, quarantine management, platform details, cleanup tools, event tracking, and Hybrid Analysis / Falcon Sandbox integrations.
 
 It is designed to give you a single place where you can monitor the machine, run scans, review recent security activity, and use external malware-analysis providers when they are configured.
 
 ## Highlights
 
 - live dashboard with CPU, RAM, network, and platform information
-- hosts-based content filtering for adult content, ads, malware, gambling, piracy, social media, and bypass domains
+- proxy-based content filtering for adult content, ads, malware, gambling, piracy, social media, and bypass domains
 - protection workflow with local heuristic scanning, quarantine, recent results, and provider status
 - Hybrid Analysis quick scans and Falcon Sandbox submission support
 - platform tools for OS details, network monitoring, and cleanup actions
@@ -79,12 +79,12 @@ The repository can now keep encrypted provider secrets in `backend/config/secret
 
 ## Content Filtering
 
-The Content Filtering tab applies real blocking by writing a managed section into the OS hosts file.
+The Content Filtering tab applies blocking through the local U-Trust browser proxy. The backend compiles the selected feeds into an in-memory block cache, and the proxy checks each HTTP or HTTPS destination before opening the outbound connection.
 
-- Windows and Linux are the primary targets
-- macOS hosts-path support is included as a best-effort path
-- applying or removing the hosts policy usually requires running the backend with administrator or root privileges
-- hosts-based blocking is system-wide, but it does not wildcard every possible subdomain the way a dedicated DNS proxy would
+- Windows uses WinINET proxy settings for Chrome and Edge auto-configuration
+- no administrator privileges are required for the content-filter policy itself
+- `CONTENT_FILTER_BROWSER_PROXY_ENABLED=false` can disable browser proxy auto-configuration when needed
+- optional QUIC hardening can be enabled with `CONTENT_FILTER_BLOCK_QUIC=true`
 
 ## Development Notes
 

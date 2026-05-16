@@ -528,12 +528,7 @@ function Sidebar({ active, onNavigate }) {
         ))}
       </nav>
 
-      <div className="sidebar-footer">
-        <div className="sidebar-device">
-          <span className="device-dot" />
-          <span className="device-name">utrust-node-01</span>
-        </div>
-      </div>
+      
     </aside>
   );
 }
@@ -668,7 +663,7 @@ function Dashboard({ data, onNavigate, onRefresh }) {
           onAction={() => onNavigate('filtering')}
         >
           <p className="module-desc">
-            Hosts-based containment for adult content, ads, malware, gambling, piracy, social platforms, and DNS-bypass routes.
+            Proxy-based containment for adult content, ads, malware, gambling, piracy, social platforms, and DNS-bypass routes.
           </p>
           <div className="module-stats-row">
             <div className="mini-stat">
@@ -788,18 +783,13 @@ function OsBanner({ msg, ok }) {
   );
 }
 
-function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, onRunBackendAsAdmin, rules, summary }) {
+function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, rules, summary }) {
   const [form, setForm] = useState({ action: 'BLOCK', protocol: 'TCP', port: '', ip: 'Any', status: 'Active', desc: '' });
   const [submitError, setSubmitError]   = useState('');
   const [osStatus,    setOsStatus]      = useState(null);   // { ok, msg }
   const [deletingId,  setDeletingId]    = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [adminRestarting, setAdminRestarting] = useState(false);
   const osFirewall = summary?.osFirewall || {};
-  const showAdminButton = Boolean(osFirewall.supported && osFirewall.enforcementEnabled && !osFirewall.canApply);
-
-  // Load rules as soon as this component mounts (handles server-restart case)
-  useEffect(() => { onRefresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -818,6 +808,7 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, onRu
       if (result?.osFirewall) {
         setOsStatus({ ok: result.osFirewall.success === true, msg: result.osFirewall.message || '' });
       }
+      await onRefresh();
       setForm((c) => ({ ...c, port: '', desc: '' }));
     } catch (e) {
       setSubmitError(e.message);
@@ -832,20 +823,6 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, onRu
       await onDeleteRule(ruleId);
     } finally {
       setDeletingId(null);
-    }
-  }
-
-  async function handleRunBackendAsAdmin() {
-    setSubmitError('');
-    setOsStatus(null);
-    setAdminRestarting(true);
-
-    try {
-      const result = await onRunBackendAsAdmin();
-      setOsStatus({ ok: true, msg: result?.message || 'Backend-ul se reporneste ca Administrator.' });
-    } catch (e) {
-      setOsStatus({ ok: false, msg: e.message || 'Nu am putut porni backend-ul ca Administrator.' });
-      setAdminRestarting(false);
     }
   }
 
@@ -872,11 +849,6 @@ function FirewallPage({ error, loading, onAddRule, onDeleteRule, onRefresh, onRu
       {osFirewall.message ? (
         <div className={`form-message ${osFirewall.canApply ? 'form-message--success' : 'form-message--error'}`} style={{ alignItems: 'center', display: 'flex', gap: '0.75rem', justifyContent: 'space-between' }}>
           <span>{osFirewall.message}</span>
-          {showAdminButton ? (
-            <button className="control-btn control-btn--primary" disabled={adminRestarting} onClick={handleRunBackendAsAdmin} type="button">
-              {adminRestarting ? 'Se reporneste...' : 'Run as Administrator'}
-            </button>
-          ) : null}
         </div>
       ) : null}
 
@@ -2270,8 +2242,28 @@ function countryFlag(code) {
 // Amber = geo-block, Rosu = content-filter block
 const GEO_COLOR     = '#f5a623';
 const CONTENT_COLOR = '#ff453a';
+const INBOUND_COLOR = '#64d2ff';
+const OUTBOUND_COLOR = '#34c759';
 
-function AttackMap({ attacks }) {
+function getGeoActivityColor(item) {
+  if (item.type === 'content') return CONTENT_COLOR;
+  if (item.type === 'inbound') return INBOUND_COLOR;
+  if (item.type === 'outbound') return OUTBOUND_COLOR;
+  return GEO_COLOR;
+}
+
+function getGeoActivityLabel(item) {
+  if (item.type === 'content') return 'Content Filter';
+  if (item.type === 'inbound') return 'Inbound';
+  if (item.type === 'outbound') return 'Outbound';
+  return 'Geo-Block';
+}
+
+function getGeoActivityCoords(item) {
+  return Array.isArray(item.coords) ? item.coords : COUNTRY_COORDS_UI[item.country];
+}
+
+function AttackMap({ attacks, connections = [] }) {
   const [now, setNow] = useState(0);
   useEffect(() => {
     const updateNow = () => setNow(Date.now());
@@ -2281,25 +2273,42 @@ function AttackMap({ attacks }) {
   }, []);
 
   const FADE_MS = 22000;
-  const visible = attacks
-    .filter((a) => COUNTRY_COORDS_UI[a.country] && now - a.timestamp < FADE_MS)
+  const connectionActivity = connections.map((connection) => ({
+    ...connection,
+    type: connection.direction,
+    hostname: connection.remoteAddress,
+    timestamp: connection.timestamp || now,
+  }));
+  const activity = [...connectionActivity, ...attacks];
+  const visible = activity
+    .filter((a) => getGeoActivityCoords(a) && now - a.timestamp < FADE_MS)
     .slice(0, 20);
 
   const geoCount     = attacks.filter((a) => a.type === 'geo').length;
   const contentCount = attacks.filter((a) => a.type === 'content').length;
+  const inboundCount = connections.filter((a) => a.direction === 'inbound').length;
+  const outboundCount = connections.filter((a) => a.direction === 'outbound').length;
 
   return (
     <div style={{ background: '#0a0a0a', border: '1px solid #1e1e1e', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
       {/* Header */}
-      <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+      <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>Live Threat Map</span>
         <span style={{ fontSize: '0.75rem' }}>
           <span style={{ color: GEO_COLOR, fontWeight: 600 }}>● Geo-Block</span>
           <span style={{ color: '#444', margin: '0 0.5rem' }}>|</span>
           <span style={{ color: CONTENT_COLOR, fontWeight: 600 }}>● Content Filter</span>
         </span>
+        <span style={{ fontSize: '0.75rem' }}>
+          <span style={{ color: INBOUND_COLOR, fontWeight: 600 }}>Inbound</span>
+          <span style={{ color: '#444', margin: '0 0.5rem' }}>|</span>
+          <span style={{ color: OUTBOUND_COLOR, fontWeight: 600 }}>Outbound</span>
+        </span>
+        <span style={{ fontSize: '0.72rem', color: '#666' }}>
+          {inboundCount} inbound / {outboundCount} outbound
+        </span>
         <span style={{ fontSize: '0.72rem', color: '#444' }}>
-          {geoCount + contentCount > 0 ? `${geoCount + contentCount} total blocked` : 'Waiting for blocked connections…'}
+          {activity.length > 0 ? `${geoCount + contentCount} blocked events` : 'Waiting for country-linked activity...'}
         </span>
       </div>
 
@@ -2322,11 +2331,11 @@ function AttackMap({ attacks }) {
         {visible.map((atk, i) => {
           const age     = now - atk.timestamp;
           const opacity = Math.max(0.08, 1 - age / FADE_MS);
-          const color   = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
+          const color   = getGeoActivityColor(atk);
           return (
             <Line
               key={`line-${atk.timestamp}-${i}`}
-              from={COUNTRY_COORDS_UI[atk.country]}
+              from={getGeoActivityCoords(atk)}
               to={DEST}
               stroke={color}
               strokeWidth={1.4}
@@ -2340,9 +2349,9 @@ function AttackMap({ attacks }) {
         {visible.map((atk, i) => {
           const age     = now - atk.timestamp;
           const opacity = Math.max(0.2, 1 - age / FADE_MS);
-          const color   = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
+          const color   = getGeoActivityColor(atk);
           return (
-            <Marker key={`dot-${atk.timestamp}-${i}`} coordinates={COUNTRY_COORDS_UI[atk.country]}>
+            <Marker key={`dot-${atk.timestamp}-${i}`} coordinates={getGeoActivityCoords(atk)}>
               <circle r={3.5} fill={color} fillOpacity={opacity} />
             </Marker>
           );
@@ -2356,16 +2365,16 @@ function AttackMap({ attacks }) {
       </ComposableMap>
 
       {/* Feed atacuri recente */}
-      {attacks.length > 0 && (
+      {activity.length > 0 && (
         <div style={{ borderTop: '1px solid #1a1a1a', maxHeight: '130px', overflowY: 'auto' }}>
-          {attacks.slice(0, 12).map((atk, i) => {
-            const color = atk.type === 'content' ? CONTENT_COLOR : GEO_COLOR;
-            const label = atk.type === 'content' ? 'Content Filter' : 'Geo-Block';
+          {activity.slice(0, 12).map((atk, i) => {
+            const color = getGeoActivityColor(atk);
+            const label = getGeoActivityLabel(atk);
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.35rem 1.25rem', borderBottom: '1px solid #111', fontSize: '0.76rem' }}>
                 <span style={{ color, fontWeight: 700, minWidth: '1.4rem' }}>{countryFlag(atk.country)}</span>
                 <span style={{ color, fontSize: '0.7rem', background: `${color}18`, borderRadius: '4px', padding: '0.1rem 0.4rem', whiteSpace: 'nowrap' }}>{label}</span>
-                <span style={{ color: '#888', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{atk.hostname}</span>
+                <span style={{ color: '#888', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{atk.hostname || atk.remoteAddress}</span>
                 <span style={{ color: '#3a3a3a', whiteSpace: 'nowrap' }}>{new Date(atk.timestamp).toLocaleTimeString()}</span>
               </div>
             );
@@ -2376,29 +2385,28 @@ function AttackMap({ attacks }) {
   );
 }
 
-// Countries that have community-maintained domain lists (v2fly)
-const GEO_SOURCE_COUNTRIES = new Set(['CN', 'RU', 'IR', 'VN', 'KP', 'BY', 'IN', 'TR', 'PK', 'UA']);
-
 function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
   const [search, setSearch] = useState('');
   const [attacks, setAttacks] = useState([]);
+  const [connections, setConnections] = useState([]);
+  const [connectionSummary, setConnectionSummary] = useState({ total: 0, inbound: 0, outbound: 0, countries: 0, byCountry: [] });
   const selected = new Set(data.blockedCountries || []);
 
-  // Fetch atacuri la fiecare 3s
+  // Fetch live geo events and country-linked connections.
   useEffect(() => {
-    async function fetchAttacks() {
+    async function fetchGeoActivity() {
       try {
-        const urls = buildApiCandidates('/geo-filter/attacks');
-        for (const url of urls) {
-          try {
-            const res = await fetch(url, { headers: { Authorization: `Bearer ${runtimeSessionToken}` } });
-            if (res.ok) { const j = await res.json(); setAttacks(j.attacks || []); break; }
-          } catch { /* ignore */ }
-        }
+        const [attackPayload, connectionPayload] = await Promise.all([
+          requestJson('/geo-filter/attacks'),
+          requestJson('/geo-filter/connections?limit=160'),
+        ]);
+        setAttacks(attackPayload?.attacks || []);
+        setConnections(connectionPayload?.items || []);
+        setConnectionSummary(connectionPayload?.summary || { total: 0, inbound: 0, outbound: 0, countries: 0, byCountry: [] });
       } catch { /* ignore */ }
     }
-    fetchAttacks();
-    const id = setInterval(fetchAttacks, 3000);
+    fetchGeoActivity();
+    const id = setInterval(fetchGeoActivity, 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -2417,8 +2425,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
     onUpdate({ enabled: !data.enabled });
   }
 
-  // Count selected countries that have domain list sources
-  const selectedWithSource = (data.blockedCountries || []).filter((c) => GEO_SOURCE_COUNTRIES.has(c));
+  const selectedWithSource = data.blockedCountries || [];
   const syncStatus = data.syncStatus || {};
   const totalDomains = Object.values(syncStatus).reduce((acc, s) => acc + (s?.count || 0), 0);
 
@@ -2439,7 +2446,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
                 type="button"
                 style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}
               >
-                {data.syncing ? 'Syncing…' : 'Sync Domain Lists'}
+                {data.syncing ? 'Syncing...' : 'Sync Geo Data'}
               </button>
             )}
           </div>
@@ -2449,15 +2456,67 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
       {data.error ? <p style={{ color: '#ff453a', marginBottom: '1rem' }}>{data.error}</p> : null}
 
       {/* Harta */}
-      <AttackMap attacks={attacks} />
+      <AttackMap attacks={attacks} connections={connections} />
+
+      <div className="panel-grid panel-grid--stats" style={{ marginBottom: '1rem' }}>
+        <StatCard accent="neutral" label="Geo Connections" value={formatInteger(connectionSummary.total)} />
+        <StatCard accent="blue" label="Inbound" value={formatInteger(connectionSummary.inbound)} />
+        <StatCard accent="green" label="Outbound" value={formatInteger(connectionSummary.outbound)} />
+        <StatCard accent="amber" label="Countries" value={formatInteger(connectionSummary.countries)} />
+      </div>
+
+      <section className="panel-card" style={{ marginBottom: '1rem' }}>
+        <div className="panel-card__header">
+          <div>
+            <p className="panel-kicker">Live Network Geography</p>
+            <h3>Inbound / Outbound Connections</h3>
+          </div>
+          <span style={{ fontSize: '0.75rem', opacity: 0.55 }}>{connections.length} country-linked</span>
+        </div>
+        {connections.length === 0 ? <EmptyState text="No public inbound or outbound connections with country data right now." /> : null}
+        {connections.length > 0 ? (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Direction</th>
+                  <th>Country</th>
+                  <th>Remote</th>
+                  <th>Local</th>
+                  <th>Proto</th>
+                  <th>State</th>
+                  <th>Process</th>
+                </tr>
+              </thead>
+              <tbody>
+                {connections.slice(0, 80).map((connection, index) => (
+                  <tr key={`${connection.remoteAddress}-${connection.remotePort}-${connection.localPort}-${index}`}>
+                    <td>
+                      <span style={{ color: connection.direction === 'inbound' ? INBOUND_COLOR : OUTBOUND_COLOR, fontWeight: 700 }}>
+                        {connection.direction}
+                      </span>
+                    </td>
+                    <td>{countryFlag(connection.country)} {connection.country}{connection.city ? ` / ${connection.city}` : ''}</td>
+                    <td>{formatConnectionEndpoint(connection.remoteAddress, connection.remotePort)}</td>
+                    <td>{formatConnectionEndpoint(connection.localAddress, connection.localPort)}</td>
+                    <td>{connection.protocol || '-'}</td>
+                    <td>{connection.state || '-'}</td>
+                    <td>{connection.processName || connection.pid || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
 
       {/* Sync status banner */}
       {selectedWithSource.length > 0 && (
         <div style={{ marginBottom: '1rem', padding: '0.85rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px', fontSize: '0.82rem', color: '#a0a0a0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
             <span>
-              Domain lists: <strong style={{ color: '#e8e8e8' }}>{totalDomains.toLocaleString()} domains</strong> loaded across {Object.keys(syncStatus).length} {Object.keys(syncStatus).length === 1 ? 'country' : 'countries'}.
-              {totalDomains === 0 && <span style={{ color: '#f5a623', marginLeft: '0.5rem' }}>Click "Sync Domain Lists" to download them.</span>}
+              IP geolocation is active for every selected country. Optional domain lists: <strong style={{ color: '#e8e8e8' }}>{totalDomains.toLocaleString()} domains</strong> cached across {Object.keys(syncStatus).length} {Object.keys(syncStatus).length === 1 ? 'country' : 'countries'}.
+              {totalDomains === 0 && <span style={{ color: '#f5a623', marginLeft: '0.5rem' }}>Countries without domain lists are still enforced by IP geolocation.</span>}
             </span>
           </div>
           {selectedWithSource.length > 0 && (
@@ -2475,9 +2534,9 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
                       border: `1px solid ${hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623'}`,
                       color: hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623',
                     }}
-                    title={hasError ? s.error : hasList ? `${s.count.toLocaleString()} domains · synced ${new Date(s.lastSync).toLocaleString()}` : 'No cache — sync required'}
+                    title={hasError ? s.error : hasList ? `${s.count.toLocaleString()} domains synced ${new Date(s.lastSync).toLocaleString()}` : 'IP geolocation active'}
                   >
-                    {countryFlag(code)} {code}: {hasList ? `${(s.count / 1000).toFixed(1)}k` : hasError ? 'error' : 'no cache'}
+                    {countryFlag(code)} {code}: {hasList ? `${(s.count / 1000).toFixed(1)}k domains` : hasError ? 'error' : 'IP geo'}
                   </span>
                 );
               })}
@@ -2519,7 +2578,6 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.6rem' }}>
         {filtered.map((c) => {
           const active = selected.has(c.code);
-          const hasSource = GEO_SOURCE_COUNTRIES.has(c.code);
           const ss = syncStatus[c.code];
           const domainCount = ss?.count || 0;
           return (
@@ -2541,7 +2599,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
               <span style={{ fontSize: '1.2rem' }}>{countryFlag(c.code)}</span>
               <span style={{ flex: 1 }}>{c.name}</span>
               <span style={{ fontSize: '0.7rem', opacity: 0.5 }}>{c.code}</span>
-              {hasSource && active && (
+              {active && (
                 <span
                   style={{
                     fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '3px',
@@ -2551,7 +2609,7 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {domainCount > 0 ? `${(domainCount / 1000).toFixed(0)}k` : 'sync'}
+                  {domainCount > 0 ? `${(domainCount / 1000).toFixed(0)}k` : 'IP geo'}
                 </span>
               )}
             </button>
@@ -2567,6 +2625,8 @@ export default function App() {
   const [serverData, setServerData] = useState(null);
   const [connStatus, setConnStatus] = useState('connecting');
   const [connMessage, setConnMessage] = useState('Connecting to backend...');
+  const [backendRestarting, setBackendRestarting] = useState(false);
+  const [backendRestartMessage, setBackendRestartMessage] = useState('');
   const [firewallData, setFirewallData] = useState({ rules: [], summary: null, loading: false, error: '' });
   const [protectionData, setProtectionData] = useState({
     summary: {},
@@ -2632,11 +2692,36 @@ export default function App() {
       setServerData(payload);
       setConnStatus('ok');
       setConnMessage('Live telemetry connected.');
+      setBackendRestartMessage('');
     } catch (error) {
       setConnStatus('error');
       setConnMessage(error.message || 'Connection failed.');
     }
   }, []);
+
+  const handleRestartBackend = useCallback(async () => {
+    setBackendRestarting(true);
+    setBackendRestartMessage('Restarting backend...');
+
+    try {
+      const response = await fetch('/__utrust/restart-backend', {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.message || `Restart failed with HTTP ${response.status}.`);
+      }
+
+      setBackendRestartMessage(payload.message || 'Backend restarted. Reconnecting...');
+      await fetchDashboard();
+    } catch (error) {
+      setConnStatus('error');
+      setBackendRestartMessage(error.message || 'Could not restart backend from the local dev server.');
+    } finally {
+      setBackendRestarting(false);
+    }
+  }, [fetchDashboard]);
 
   const loadFirewall = useCallback(async () => {
     setFirewallData((current) => ({ ...current, loading: true, error: '' }));
@@ -2875,10 +2960,6 @@ export default function App() {
     await requestJson(`/firewall/rules/${ruleId}`, { method: 'DELETE' });
     await Promise.all([loadFirewall(), fetchDashboard(), loadEvents()]);
   }, [fetchDashboard, loadEvents, loadFirewall]);
-
-  const handleRunBackendAsAdmin = useCallback(async () => {
-    return requestJson('/firewall/relaunch-admin', { method: 'POST' });
-  }, []);
 
   const handleScanFiles = useCallback(async (files, options = {}) => {
     setProtectionData((current) => ({ ...current, scanLoading: true, error: '' }));
@@ -3121,7 +3202,7 @@ export default function App() {
         ...c,
         enabled: Boolean(payload?.enabled),
         blockedCountries: payload?.blockedCountries || [],
-        syncStatus: statusPayload?.status || c.syncStatus,
+        syncStatus: statusPayload?.status || payload?.syncStatus || c.syncStatus,
         loading: false,
       }));
     } catch (err) {
@@ -3133,7 +3214,13 @@ export default function App() {
     setGeoFilterData((c) => ({ ...c, saving: true, error: '' }));
     try {
       const payload = await requestJson('/geo-filter', { method: 'PATCH', body: JSON.stringify(patch) });
-      setGeoFilterData((c) => ({ ...c, enabled: Boolean(payload?.enabled), blockedCountries: payload?.blockedCountries || [], saving: false }));
+      setGeoFilterData((c) => ({
+        ...c,
+        enabled: Boolean(payload?.enabled),
+        blockedCountries: payload?.blockedCountries || [],
+        syncStatus: payload?.syncStatus || c.syncStatus,
+        saving: false,
+      }));
     } catch (err) {
       setGeoFilterData((c) => ({ ...c, saving: false, error: err.message }));
     }
@@ -3246,7 +3333,18 @@ export default function App() {
       <div className="control-main">
         {connStatus === 'error' ? (
           <div className="conn-banner conn-banner--error">
-            Backend unavailable at <code>{buildApiUrl('/status')}</code>. {connMessage}
+            <span>
+              Backend unavailable at <code>{buildApiUrl('/status')}</code>. {connMessage}
+              {backendRestartMessage ? <span className="conn-banner__note"> {backendRestartMessage}</span> : null}
+            </span>
+            <button
+              className="control-btn control-btn--primary conn-banner__action"
+              disabled={backendRestarting}
+              onClick={handleRestartBackend}
+              type="button"
+            >
+              {backendRestarting ? 'Restarting...' : 'Restart Backend'}
+            </button>
           </div>
         ) : null}
 
@@ -3281,7 +3379,6 @@ export default function App() {
             onAddRule={handleAddFirewallRule}
             onDeleteRule={handleDeleteFirewallRule}
             onRefresh={loadFirewall}
-            onRunBackendAsAdmin={handleRunBackendAsAdmin}
             rules={firewallData.rules}
             summary={firewallData.summary}
           />

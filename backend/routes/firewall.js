@@ -13,7 +13,6 @@ const {
   PROTECTED_WEB_PORTS,
   applyFirewallRuleToOs,
   inspectFirewallEnvironment,
-  relaunchBackendAsAdmin,
   removeFirewallRuleFromOs,
   validateFirewallRule,
 } = require('../utils/firewallManager');
@@ -73,28 +72,20 @@ router.post('/rules', (req, res) => {
     success: true,
     message: osFirewall.applied
       ? 'Regula a fost adaugata si aplicata in firewall-ul OS.'
-      : 'Regula a fost salvata in aplicatie. Pentru aplicare OS, ruleaza backend-ul ca Administrator.',
+      : 'Regula a fost salvata in aplicatie, dar nu a fost aplicata in Windows Firewall.',
     osFirewall,
     rule: nextRule,
   });
 });
 
 router.post('/relaunch-admin', (_req, res) => {
-  const result = relaunchBackendAsAdmin();
-  if (!result.success) {
-    return res.status(500).json({
-      success: false,
-      message: result.message,
-      result,
-    });
-  }
-
   res.json({
     success: true,
-    message: result.message,
-    result,
+    message: 'Platform restart is no longer required. Add or delete an active firewall rule and approve the Windows UAC prompt.',
+    result: {
+      relaunchRequired: false,
+    },
   });
-
 });
 
 router.delete('/rules/:id', (req, res) => {

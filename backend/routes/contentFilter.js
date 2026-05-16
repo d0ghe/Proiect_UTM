@@ -10,7 +10,7 @@ const {
   applyPolicy,
   buildOverview,
   checkDomainAgainstPolicy,
-  removeManagedBlock,
+  removePolicyEnforcement,
   splitTextList,
   syncPolicy,
 } = require('../utils/contentFilter');
@@ -51,19 +51,11 @@ function buildPolicyPatch(body = {}) {
 
 function buildApplyRuntimeMessage(result) {
   if (result.applied) {
-    if (result.enforcementMode === 'proxy') {
-      return `${result.appliedDomainCount} domenii blocate prin proxy optional (Chrome/Edge).`;
-    }
-
-    return `${result.appliedDomainCount} domenii blocate prin hosts file.`;
+    return `${result.appliedDomainCount} domenii blocate prin proxy local.`;
   }
 
   if ((result.domains?.length || 0) > 0) {
-    if (result.hostsSkippedReason) {
-      return `${result.hostsSkippedReason} Nu am scris lista in hosts ca sa nu incetinim browsing-ul.`;
-    }
-
-    return 'Blocarea nu a fost aplicata: ruleaza backend-ul ca Administrator pentru hosts file. Proxy-ul browser este dezactivat.';
+    return 'Politica este compilata, dar proxy-ul browser este dezactivat.';
   }
 
   return 'Nicio categorie selectata - blocarea a fost dezactivata.';
@@ -75,14 +67,14 @@ function buildApplyResponseMessage(result) {
   }
 
   if ((result.domains?.length || 0) > 0) {
-    if (result.hostsSkippedReason) {
-      return 'Lista este prea mare pentru hosts pe Windows. Am eliminat intrarile vechi ca sa ramana browsing-ul rapid.';
-    }
-
-    return 'Blocarea nu a fost aplicata. Ruleaza backend-ul ca Administrator pentru hosts file sau activeaza explicit proxy-ul optional.';
+    return 'Blocarea nu a fost aplicata deoarece proxy-ul browser este dezactivat.';
   }
 
   return 'Nicio categorie selectata.';
+}
+
+function countSyncedFeeds(result) {
+  return Object.values(result?.categoryDomainCounts || {}).filter((count) => Number(count) > 0).length;
 }
 
 router.get('/', (_req, res) => {
@@ -105,19 +97,19 @@ router.patch('/', (req, res) => {
 router.post('/sync', async (_req, res) => {
   try {
     const state = getContentFilterState();
-    const result = await syncPolicy(state.policy, { sync: true });
+    const result = await syncPolicy(state.policy, { sync: true, loadAllCategories: true });
 
     updateContentFilterRuntime({
       lastSyncedAt: result.lastSyncedAt,
       categoryDomainCounts: result.categoryDomainCounts,
       sourceStatus: result.sourceStatus,
       lastError: '',
-      lastMessage: `Synchronized ${result.domains.length} blocked domains from remote sources.`,
+      lastMessage: `Synchronized ${countSyncedFeeds(result)} category feeds from remote sources.`,
     });
 
     res.json({
       success: true,
-      message: `Synchronized ${result.domains.length} blocked domains.`,
+      message: `Synchronized ${countSyncedFeeds(result)} category feeds.`,
       ...buildOverview(getContentFilterState()),
     });
   } catch (error) {
@@ -141,22 +133,22 @@ router.post('/apply', async (req, res) => {
     }
 
     const state = getContentFilterState();
-    const result = await applyPolicy(state.policy, { sync: true });
+    const result = await applyPolicy(state.policy, { sync: true, loadAllCategories: true });
 
     updateContentFilterRuntime({
       applied: Boolean(result.applied),
       appliedDomainCount: result.appliedDomainCount,
       categoryDomainCounts: result.categoryDomainCounts,
       enforcementMode: result.enforcementMode,
-      hostsApplied: result.hostsApplied,
-      hostsMaxDomains: result.hostsMaxDomains,
-      hostsSkippedReason: result.hostsSkippedReason,
       proxyEnabled: result.proxyEnabled,
+      proxyAddress: result.proxyAddress,
+      proxyPort: result.proxyPort,
+      proxyRunning: result.proxyRunning,
+      proxyMessage: result.proxyMessage,
       quicBlocked: result.quicBlocked,
       sourceStatus: result.sourceStatus,
       lastSyncedAt: result.lastSyncedAt,
       lastApplyAt: result.lastApplyAt,
-      dnsFlushMessage: result.dnsFlushMessage,
       lastError: '',
       lastMessage: buildApplyRuntimeMessage(result),
     });
@@ -177,26 +169,27 @@ router.post('/apply', async (req, res) => {
 
 router.post('/remove', (_req, res) => {
   try {
-    const result = removeManagedBlock();
+    const result = removePolicyEnforcement();
 
     updateContentFilterPolicy({ enabled: false });
     updateContentFilterRuntime({
       applied: false,
       appliedDomainCount: 0,
       enforcementMode: 'none',
-      hostsApplied: false,
-      hostsSkippedReason: '',
-      proxyEnabled: false,
+      proxyEnabled: result.proxyEnabled,
+      proxyAddress: result.proxyAddress,
+      proxyPort: result.proxyPort,
+      proxyRunning: result.proxyRunning,
+      proxyMessage: result.proxyMessage,
       quicBlocked: false,
       lastRemoveAt: result.lastRemoveAt,
-      dnsFlushMessage: result.dnsFlushMessage,
       lastError: '',
-      lastMessage: 'Removed managed content-filter entries from the hosts file.',
+      lastMessage: 'Content-filter proxy cache cleared.',
     });
 
     res.json({
       success: true,
-      message: 'Content-filter entries removed from the system hosts file.',
+      message: 'Content-filter proxy cache cleared.',
       ...buildOverview(getContentFilterState()),
     });
   } catch (error) {

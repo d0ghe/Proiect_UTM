@@ -2,22 +2,46 @@ const express = require('express');
 
 const verifyToken = require('../middleware/verifyToken');
 const { getGeoFilterState, updateGeoFilter } = require('../store/geoFilterStore');
-const { getCountry, getRecentAttacks, syncCountryDomains, getCountrySyncStatus, COUNTRY_SOURCES } = require('../utils/geoFilter');
+const {
+  getCountry,
+  getGeoConnections,
+  getRecentAttacks,
+  initCountryDomains,
+  syncCountryDomains,
+  getCountrySyncStatus,
+} = require('../utils/geoFilter');
 
 const router = express.Router();
 router.use(verifyToken);
 
 router.get('/', (_req, res) => {
-  res.json({ success: true, ...getGeoFilterState() });
+  const state = getGeoFilterState();
+  res.json({ success: true, syncStatus: getCountrySyncStatus(state.blockedCountries), ...state });
 });
 
-router.patch('/', (req, res) => {
+router.patch('/', async (req, res) => {
   const state = updateGeoFilter(req.body || {});
-  res.json({ success: true, message: 'Geo-filter policy updated.', ...state });
+  await initCountryDomains(state.blockedCountries);
+  res.json({
+    success: true,
+    message: 'Geo-filter policy updated.',
+    syncStatus: getCountrySyncStatus(state.blockedCountries),
+    ...state,
+  });
 });
 
 router.get('/attacks', (_req, res) => {
   res.json({ success: true, attacks: getRecentAttacks(50) });
+});
+
+router.get('/connections', async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 120);
+    const connections = await getGeoConnections(limit);
+    res.json({ success: true, ...connections });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 router.post('/check', async (req, res) => {
@@ -36,9 +60,9 @@ router.post('/check', async (req, res) => {
 router.post('/sync', async (req, res) => {
   try {
     const state = getGeoFilterState();
-    const countries = state.blockedCountries.filter((c) => COUNTRY_SOURCES[c]);
+    const countries = state.blockedCountries;
     if (countries.length === 0) {
-      return res.json({ success: true, message: 'No countries with domain sources selected.', results: {} });
+      return res.json({ success: true, message: 'No countries selected.', results: {} });
     }
     const results = await syncCountryDomains(countries);
     res.json({ success: true, results });
@@ -48,7 +72,8 @@ router.post('/sync', async (req, res) => {
 });
 
 router.get('/sync-status', (_req, res) => {
-  res.json({ success: true, status: getCountrySyncStatus() });
+  const state = getGeoFilterState();
+  res.json({ success: true, status: getCountrySyncStatus(state.blockedCountries) });
 });
 
 module.exports = router;

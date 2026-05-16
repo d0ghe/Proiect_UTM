@@ -58,11 +58,11 @@ export default function ContentFilterPage({
   const busy = Boolean(loading || data?.saving || data?.syncing || data?.applying || data?.removing);
   const warningMessage = data?.message || runtime.lastMessage || '';
   const checkResult = data?.checkResult;
-  const enforcementLabel = runtime.enforcementMode === 'hosts'
-    ? 'Hosts'
-    : runtime.enforcementMode === 'proxy'
-      ? 'Proxy'
-      : 'None';
+  const enforcementLabel = runtime.enforcementMode === 'proxy'
+    ? 'Proxy'
+    : 'None';
+  const categoryIds = categoriesMeta.map((category) => category.id).filter(Boolean);
+  const allCategoriesSelected = categoryIds.length > 0 && categoryIds.every((id) => categories[id]);
 
   function buildPayload() {
     return {
@@ -81,6 +81,13 @@ export default function ContentFilterPage({
     await onApply(buildPayload());
   }
 
+  function setAllCategories(value) {
+    setCategories((current) => ({
+      ...current,
+      ...Object.fromEntries(categoryIds.map((id) => [id, value])),
+    }));
+  }
+
   return (
     <div className="page-content content-filter-page">
       <div className="page-header page-header--atlas">
@@ -88,7 +95,7 @@ export default function ContentFilterPage({
           <p className="page-breadcrumb">U-Trust / Policy Mesh</p>
           <h1 className="page-title">Content Filtering</h1>
           <p className="page-subtitle">
-            Build a hosts-based containment policy for adult content, ads, malware, gambling, social media, and custom domains.
+            Build a local proxy policy for adult content, ads, malware, gambling, social media, and custom domains.
           </p>
         </div>
 
@@ -106,7 +113,7 @@ export default function ContentFilterPage({
         <div className="stat-card accent-green">
           <p className="stat-label">Managed Domains</p>
           <p className="stat-value">{formatInteger(runtime.appliedDomainCount)}</p>
-          <p className="stat-meta">currently written into the hosts policy section</p>
+          <p className="stat-meta">currently loaded into the proxy block cache</p>
         </div>
         <div className="stat-card accent-blue">
           <p className="stat-label">Enabled Categories</p>
@@ -121,24 +128,19 @@ export default function ContentFilterPage({
         <div className="stat-card accent-neutral">
           <p className="stat-label">Enforcement</p>
           <p className="stat-value atlas-stat-value--compact">{enforcementLabel}</p>
-          <p className="stat-meta">{environment.permissionMessage || 'system hosts file detection'}</p>
+          <p className="stat-meta">{environment.permissionMessage || 'local proxy enforcement'}</p>
         </div>
       </div>
 
       {error ? <p className="form-message form-message--error">{error}</p> : null}
       {!error && warningMessage ? <p className="form-message form-message--success">{warningMessage}</p> : null}
-      {!error && runtime.hostsSkippedReason ? (
-        <p className="form-message form-message--error">
-          {runtime.hostsSkippedReason} Lista nu a fost scrisa in hosts ca sa nu incetineasca navigarea.
-        </p>
-      ) : null}
 
       <div className="atlas-panel-grid">
         <section className="panel-card atlas-hero-card">
           <div className="panel-card__header">
             <div>
               <p className="panel-kicker">Containment Mode</p>
-              <h3>Hosts Enforcement</h3>
+              <h3>Proxy Enforcement</h3>
             </div>
             <span className={`toggle-pill ${enabled ? 'toggle-pill--on' : 'toggle-pill--off'}`}>
               {enabled ? 'Enabled' : 'Disabled'}
@@ -147,8 +149,8 @@ export default function ContentFilterPage({
 
           <div className="atlas-hero-copy">
             <p className="module-desc">
-              This policy applies system-wide by writing a managed section into the OS hosts file. It is real blocking, but like every
-              hosts-based approach it cannot wildcard arbitrary subdomains the way a full DNS proxy can.
+              This policy is enforced by the U-Trust local browser proxy. Domain lists stay in memory and requests are blocked before
+              HTTP or HTTPS connections are opened.
             </p>
 
             <label className="atlas-switch" htmlFor="content-filter-enabled">
@@ -170,10 +172,10 @@ export default function ContentFilterPage({
               {data?.syncing ? 'Syncing...' : 'Sync Sources'}
             </button>
             <button className="control-btn control-btn--primary" disabled={busy} onClick={handleApplyPolicy} type="button">
-              {data?.applying ? 'Applying...' : 'Apply To Hosts'}
+              {data?.applying ? 'Applying...' : 'Apply To Proxy'}
             </button>
             <button className="control-btn control-btn--danger" disabled={busy} onClick={onRemove} type="button">
-              {data?.removing ? 'Removing...' : 'Remove From Hosts'}
+              {data?.removing ? 'Removing...' : 'Clear Proxy'}
             </button>
           </div>
         </section>
@@ -192,32 +194,28 @@ export default function ContentFilterPage({
               <strong>{environment.platform || '-'}</strong>
             </div>
             <div className="detail-row">
-              <span>Writable</span>
-              <strong>{environment.canWrite ? 'Yes' : 'No'}</strong>
+              <span>Proxy Address</span>
+              <strong>{runtime.proxyAddress || environment.proxyAddress || '-'}</strong>
             </div>
             <div className="detail-row">
-              <span>Managed Section</span>
-              <strong>{runtime.managedSectionPresent ? 'Present' : 'Missing'}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Managed Entries</span>
-              <strong>{formatInteger(runtime.managedEntryCount)}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Hosts Path</span>
-              <strong>{environment.hostsPath || 'Unsupported'}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Proxy Mode</span>
+              <span>Auto Proxy</span>
               <strong>{runtime.proxyEnabled ? 'On' : 'Off'}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Proxy Server</span>
+              <strong>{runtime.proxyRunning || environment.proxyRunning ? 'Running' : 'Stopped'}</strong>
+            </div>
+            <div className="detail-row">
+              <span>QUIC Guard</span>
+              <strong>{runtime.quicBlocked ? 'On' : 'Off'}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Cache Status</span>
+              <strong>{runtime.proxyMessage || '-'}</strong>
             </div>
             <div className="detail-row">
               <span>Last Apply</span>
               <strong>{formatDateTime(runtime.lastApplyAt)}</strong>
-            </div>
-            <div className="detail-row">
-              <span>DNS Flush</span>
-              <strong>{runtime.dnsFlushMessage || '-'}</strong>
             </div>
           </div>
         </section>
@@ -227,7 +225,25 @@ export default function ContentFilterPage({
         <div className="panel-card__header">
           <div>
             <p className="panel-kicker">Category Matrix</p>
-              <h3>Threat Feeds</h3>
+            <h3>Threat Feeds</h3>
+          </div>
+          <div className="atlas-category-actions">
+            <button
+              className="control-btn control-btn--ghost"
+              disabled={busy || allCategoriesSelected}
+              onClick={() => setAllCategories(true)}
+              type="button"
+            >
+              Select All
+            </button>
+            <button
+              className="control-btn control-btn--ghost"
+              disabled={busy || categoryIds.length === 0}
+              onClick={() => setAllCategories(false)}
+              type="button"
+            >
+              Clear
+            </button>
           </div>
         </div>
 

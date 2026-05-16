@@ -1,6 +1,8 @@
 const http    = require('http');
 const cors    = require('cors');
 const express = require('express');
+const fs      = require('fs');
+const path    = require('path');
 const { exec } = require('child_process');
 
 process.on('uncaughtException',  (err) => console.error('[!] uncaughtException:', err.message));
@@ -63,10 +65,12 @@ server.on('error', (error) => {
 /* ─── WinINET helpers (Chrome/Edge proxy via registry) ──────────────────── */
 
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-const LEGACY_BROWSER_PROXY_PORT = 8877;
+const BROWSER_PROXY_PORT = 8877;
+const PROXY_PAC_DIR = path.join(process.env.TEMP || process.env.TMP || __dirname, 'u-trust');
+const PROXY_PAC_PATH = path.join(PROXY_PAC_DIR, 'browser-proxy.pac');
 const BROWSER_PROXY_ENABLED = parseBoolean(
   process.env.CONTENT_FILTER_BROWSER_PROXY_ENABLED || process.env.CONTENT_FILTER_PROXY_ENABLED,
-  false,
+  true,
 );
 let stopBrowserProxyServer = null;
 
@@ -95,6 +99,37 @@ function run(cmd) {
   return new Promise((resolve) => exec(cmd, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
 }
 
+function buildPacFileUrl(filePath) {
+  return `file:///${path.resolve(filePath).replace(/\\/g, '/')}`;
+}
+
+function writeBrowserProxyPac() {
+  fs.mkdirSync(PROXY_PAC_DIR, { recursive: true });
+  const pac = `function FindProxyForURL(url, host) {
+  if (
+    isPlainHostName(host) ||
+    shExpMatch(host, "localhost") ||
+    shExpMatch(host, "127.*") ||
+    shExpMatch(host, "10.*") ||
+    shExpMatch(host, "192.168.*") ||
+    shExpMatch(host, "172.16.*") ||
+    shExpMatch(host, "172.17.*") ||
+    shExpMatch(host, "172.18.*") ||
+    shExpMatch(host, "172.19.*") ||
+    shExpMatch(host, "172.2*.*") ||
+    shExpMatch(host, "172.30.*") ||
+    shExpMatch(host, "172.31.*")
+  ) {
+    return "DIRECT";
+  }
+
+  return "PROXY 127.0.0.1:${BROWSER_PROXY_PORT}; DIRECT";
+}
+`;
+  fs.writeFileSync(PROXY_PAC_PATH, pac, 'utf8');
+  return buildPacFileUrl(PROXY_PAC_PATH);
+}
+
 function startBrowserProxy() {
   const { startProxy, stopProxy } = require('./utils/httpProxy');
   stopBrowserProxyServer = stopProxy;
@@ -117,10 +152,12 @@ async function enableChromeProxy() {
     return;
   }
 
+  const pacUrl = writeBrowserProxyPac();
   await Promise.all([
-    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`),
-    run(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${LEGACY_BROWSER_PROXY_PORT}" /f`),
-    run(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "localhost;127.0.0.1;<local>" /f`),
+    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`),
+    run(`reg add "${REG}" /v AutoConfigURL /t REG_SZ /d "${pacUrl}" /f`),
+    run(`reg delete "${REG}" /v ProxyServer /f`),
+    run(`reg delete "${REG}" /v ProxyOverride /f`),
   ]);
   // Notifică Chrome să reîncarce setările imediat (fără restart browser)
   const ps = [
@@ -131,7 +168,7 @@ async function enableChromeProxy() {
     `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
   ].join('');
   await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
-  console.log(`[+] Browser proxy set to 127.0.0.1:${LEGACY_BROWSER_PROXY_PORT}`);
+  console.log(`[+] Browser PAC set to ${pacUrl} with DIRECT fallback.`);
 }
 
 async function disableChromeProxy() {
@@ -139,7 +176,12 @@ async function disableChromeProxy() {
     return;
   }
 
-  await run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`);
+  await Promise.all([
+    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`),
+    run(`reg delete "${REG}" /v AutoConfigURL /f`),
+    run(`reg delete "${REG}" /v ProxyServer /f`),
+    run(`reg delete "${REG}" /v ProxyOverride /f`),
+  ]);
   const ps = [
     `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
     `public class WI{[DllImport("wininet.dll")]`,
@@ -158,10 +200,16 @@ async function disableChromeProxyIfOwned() {
     return;
   }
 
-  const result = await run(`reg query "${REG}" /v ProxyServer`);
-  const proxyServer = String(result.stdout || '');
-  const ownedProxy = proxyServer.includes(`127.0.0.1:${LEGACY_BROWSER_PROXY_PORT}`)
-    || proxyServer.includes(`localhost:${LEGACY_BROWSER_PROXY_PORT}`);
+  const [proxyResult, pacResult] = await Promise.all([
+    run(`reg query "${REG}" /v ProxyServer`),
+    run(`reg query "${REG}" /v AutoConfigURL`),
+  ]);
+  const proxyServer = String(proxyResult.stdout || '');
+  const pacConfig = String(pacResult.stdout || '');
+  const ownedProxy = proxyServer.includes(`127.0.0.1:${BROWSER_PROXY_PORT}`)
+    || proxyServer.includes(`localhost:${BROWSER_PROXY_PORT}`)
+    || pacConfig.includes('u-trust')
+    || pacConfig.includes('browser-proxy.pac');
 
   if (ownedProxy) {
     await disableChromeProxy();

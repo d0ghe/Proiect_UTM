@@ -709,7 +709,7 @@ function summarizeConnections(connections) {
   };
 }
 
-async function readConnections() {
+async function readConnections(limit = 30) {
   const connections = await si.networkConnections().catch(() => []);
   const normalizedConnections = normalizeSystemInformationConnections(connections);
   const hasStructuredPorts = normalizedConnections.some(
@@ -720,6 +720,10 @@ async function readConnections() {
     ? normalizedConnections
     : await readFallbackConnections();
 
+  const maxItems = Number.isFinite(Number(limit)) && Number(limit) > 0
+    ? Math.min(Math.floor(Number(limit)), 500)
+    : 30;
+
   const sortedConnections = candidateConnections
     .sort((left, right) => {
       const stateRank = rankConnection(left) - rankConnection(right);
@@ -729,7 +733,7 @@ async function readConnections() {
 
       return (left.localPort || 0) - (right.localPort || 0);
     })
-    .slice(0, 30);
+    .slice(0, maxItems);
 
   return {
     items: sortedConnections,
@@ -971,4 +975,5 @@ async function collectTelemetry() {
 
 module.exports = {
   collectTelemetry,
+  readConnections,
 };

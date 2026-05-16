@@ -15,6 +15,10 @@ function buildDefaultCategories() {
   }, {});
 }
 
+function clearLegacyRuntimeText(value) {
+  return /\bhosts?\b/i.test(String(value || '')) ? '' : value;
+}
+
 function createDefaultStore() {
   return {
     policy: {
@@ -34,12 +38,12 @@ function createDefaultStore() {
       lastMessage: '',
       lastError: '',
       sourceStatus: {},
-      dnsFlushMessage: '',
       enforcementMode: 'none',
-      hostsApplied: false,
-      hostsMaxDomains: 5000,
-      hostsSkippedReason: '',
       proxyEnabled: false,
+      proxyAddress: '127.0.0.1:8877',
+      proxyPort: 8877,
+      proxyRunning: false,
+      proxyMessage: '',
       quicBlocked: false,
     },
   };
@@ -67,7 +71,7 @@ function createContentFilterStore(storeFile = process.env.CONTENT_FILTER_STORE_F
       }
 
       const parsed = JSON.parse(raw);
-      return {
+      const normalized = {
         ...createDefaultStore(),
         ...parsed,
         policy: {
@@ -82,7 +86,11 @@ function createContentFilterStore(storeFile = process.env.CONTENT_FILTER_STORE_F
         },
         runtime: {
           ...createDefaultStore().runtime,
-          ...(parsed.runtime || {}),
+          ...Object.fromEntries(
+            Object.keys(createDefaultStore().runtime)
+              .filter((key) => Object.prototype.hasOwnProperty.call(parsed.runtime || {}, key))
+              .map((key) => [key, parsed.runtime[key]]),
+          ),
           categoryDomainCounts: {
             ...buildDefaultCategories(),
             ...((parsed.runtime || {}).categoryDomainCounts || {}),
@@ -92,6 +100,9 @@ function createContentFilterStore(storeFile = process.env.CONTENT_FILTER_STORE_F
             : {},
         },
       };
+      normalized.runtime.lastMessage = clearLegacyRuntimeText(normalized.runtime.lastMessage);
+      normalized.runtime.proxyMessage = clearLegacyRuntimeText(normalized.runtime.proxyMessage);
+      return normalized;
     } catch {
       return createDefaultStore();
     }

@@ -91,10 +91,10 @@ router.get('/', (_req, res) => {
       id: `content-filter-${contentFilter.runtime.lastApplyAt || 'idle'}`,
       source: 'Content Filter',
       severity: contentFilter.policy.enabled && !contentFilter.runtime.applied ? 'warning' : 'info',
-      title: contentFilter.policy.enabled ? 'Hosts policy configured' : 'Content filtering idle',
+      title: contentFilter.policy.enabled ? 'Proxy policy configured' : 'Content filtering idle',
       detail: contentFilter.policy.enabled
-        ? `${contentFilter.runtime.appliedDomainCount || 0} domains are prepared for hosts-based blocking across ${contentFilter.runtime.enabledCategoryIds.length} categories.`
-        : 'No content-filter policy is currently enforced on the hosts file.',
+        ? `${contentFilter.runtime.appliedDomainCount || 0} domains are enforced through the local proxy across ${contentFilter.runtime.enabledCategoryIds.length} categories.`
+        : 'No content-filter policy is currently enforced.',
       time: contentFilter.runtime.lastApplyAt || contentFilter.policy.lastUpdated || controls.lastUpdated,
     },
     ...scanLogs.slice(0, 8).map(buildLogEvent),
