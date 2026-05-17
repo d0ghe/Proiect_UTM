@@ -66,7 +66,7 @@ async function getBlockDecision(hostname, port) {
   if (geo.blocked) {
     return {
       blocked: true,
-      label: 'This destination is blocked by the Geo-Filter policy.',
+      label: 'This destination is handled by the Geo Tracking policy.',
       detail: `${hostname} - ${geo.country}`,
       geo,
     };

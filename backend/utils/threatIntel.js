@@ -72,7 +72,7 @@ function recordScan(scanResult) {
   for (const ip of scanResult.iocs?.ips || []) bumpCounter(intel.topIPs, ip);
   for (const tech of scanResult.mitreTechniques || []) {
     bumpCounter(intel.topMitreTechniques, tech.id);
-    // per-day tracking for heat-map (keep last 30 days)
+    // per-day tracking for recent MITRE activity (keep last 30 days)
     if (!intel.mitreByDay) intel.mitreByDay = {};
     if (!intel.mitreByDay[today]) intel.mitreByDay[today] = {};
     bumpCounter(intel.mitreByDay[today], tech.id);
@@ -116,34 +116,6 @@ function getIntelDashboard() {
     topMitreTechniques: topN(intel.topMitreTechniques, 10),
     infectedTimeline: last7Days,
   };
-}
-
-function getMitreHeatmap() {
-  const intel = loadIntel();
-  const { getMitreMatrix, MITRE_TECHNIQUES } = require('./mitreMapping');
-  const matrix = getMitreMatrix();
-  const totals = intel.topMitreTechniques || {};
-  const byDay  = intel.mitreByDay || {};
-
-  // Build last-30-days array
-  const days = [];
-  for (let i = 29; i >= 0; i--) {
-    days.push(new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
-  }
-
-  // Enrich matrix with hit counts
-  const enriched = matrix.map((tactic) => ({
-    ...tactic,
-    techniques: tactic.techniques.map((tech) => ({
-      ...tech,
-      totalHits: totals[tech.id] || 0,
-      dailyHits: days.map((d) => ({ date: d, count: (byDay[d]?.[tech.id] || 0) })),
-    })),
-  }));
-
-  const maxHits = Math.max(1, ...Object.values(totals));
-
-  return { tactics: enriched, days, maxHits };
 }
 
 function resetIntel() {

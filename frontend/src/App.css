@@ -125,17 +125,19 @@ body::before {
   gap: 14px;
   padding: 0 22px;
   border-bottom: 1px solid var(--border);
+  justify-content: flex-start;
 }
 
 .brand-mark {
   width: 44px;
   height: 44px;
+  flex: 0 0 44px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   color: #071018;
-  box-shadow: 0 10px 24px rgba(0, 216, 255, 0.18);
+  box-shadow: none;
 }
 
 .brand-icon {
@@ -412,6 +414,27 @@ body::before {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: var(--panel-gap);
+}
+
+.dashboard-section {
+  margin-bottom: 28px;
+}
+
+.dashboard-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 14px;
+  flex-wrap: wrap;
+}
+
+.dashboard-section-heading h2 {
+  margin: 3px 0 0;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  font-weight: 650;
+  color: var(--txt-primary);
 }
 
 .module-header {
@@ -1473,30 +1496,6 @@ body::before {
   border-color: rgba(118, 196, 255, 0.25);
 }
 
-.deep-card__sparkline {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 44px;
-  padding: 4px 0;
-}
-
-.deep-spark-bar {
-  flex: 1;
-  background: rgba(118, 196, 255, 0.4);
-  min-width: 3px;
-  border-radius: 1px;
-  transition: background 0.2s;
-}
-
-.deep-spark-bar--warm {
-  background: rgba(255, 178, 102, 0.55);
-}
-
-.deep-spark-bar--hot {
-  background: rgba(255, 99, 110, 0.7);
-}
-
 /* ─── Live Alerts Banner ────────────────────────────────────────────────── */
 .live-alert {
   margin-bottom: 14px;
@@ -1630,25 +1629,6 @@ body::before {
 }
 .rule-match--critical { border-color: #ff6b6b; background: rgba(255, 99, 110, 0.08); }
 .rule-match--warning { border-color: #ffb266; background: rgba(255, 178, 102, 0.08); }
-
-/* ─── Entropy Heatmap ────────────────────────────────────────────────────── */
-.entropy-heatmap {
-  margin-top: 8px;
-}
-.entropy-heatmap__legend {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.7rem;
-  color: rgba(255,255,255,0.5);
-  margin-top: 4px;
-  padding: 0 4px;
-}
-.heatmap-row {
-  margin-top: 12px;
-  padding: 10px;
-  background: rgba(10, 18, 30, 0.4);
-  border-radius: 8px;
-}
 
 /* ─── IOC / PE Display ───────────────────────────────────────────────────── */
 .ioc-block, .pe-block {

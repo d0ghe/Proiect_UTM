@@ -52,6 +52,20 @@ test('generic PE imports and alignment padding stay below local review threshold
   assert.equal(result.verdict, 'MINIMAL_RISK');
 });
 
+test('entropy-only signals do not affect heuristic score', () => {
+  const result = computeHeuristicScore({
+    hexMatches: [],
+    entropyResult: { verdict: 'likely_encrypted_or_packed', highEntropyRatio: 1, overall: 7.9 },
+    evasionResult: { indicators: [], riskContribution: 0 },
+    injectionResult: { codeCaves: [], appendedPayloads: [], polyglot: [], riskContribution: 0 },
+    peResult: { isValidPE: false, anomalies: [] },
+  });
+
+  assert.equal(result.score, 0);
+  assert.equal(result.breakdown.entropy, undefined);
+  assert.equal(result.verdict, 'MINIMAL_RISK');
+});
+
 test('Cobalt Strike builtin rule does not match a generic PE MZ header', () => {
   const mzHeader = Buffer.from('4d5a90000300000004000000ffff0000b800000000000000', 'hex');
   const result = runRules(mzHeader, getRulesText());

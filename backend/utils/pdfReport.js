@@ -107,13 +107,6 @@ function buildScanReport(scanResult) {
       }
     }
 
-    // Entropy
-    if (ds?.entropyResult) {
-      sectionTitle(doc, 'Entropy Analysis');
-      keyVal(doc, 'Overall', `${ds.entropyResult.overall}/8.0 (${ds.entropyResult.verdict})`);
-      keyVal(doc, 'High-Entropy Block Ratio', `${Math.round((ds.entropyResult.highEntropyRatio || 0) * 100)}%`);
-    }
-
     // Evasion
     if (ds?.evasionResult?.indicators?.length) {
       sectionTitle(doc, 'Evasion Indicators');

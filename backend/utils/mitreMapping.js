@@ -52,7 +52,6 @@ const CATEGORY_TO_TECHNIQUE = {
   powershell_obfuscation: ['T1059.001', 'T1027'],
   vbscript_obfuscation: ['T1059.005', 'T1027'],
   javascript_obfuscation: ['T1059.007', 'T1027'],
-  high_entropy: ['T1027.002'],
   code_cave: ['T1055.002'],
   appended_payload: ['T1027'],
   polyglot: ['T1027', 'T1036'],
@@ -71,13 +70,36 @@ const IMPORT_TO_TECHNIQUE = {
   CryptEncrypt: ['T1486', 'T1573'],
 };
 
+const MEMORY_FINDING_TO_TECHNIQUE = {
+  ProcessMasquerade: ['T1036'],
+  SuspiciousPath: ['T1036'],
+  NoExecutablePath: ['T1055'],
+  PS_EncodedCommand: ['T1059.001', 'T1027'],
+  DecodedRiskyPowerShell: ['T1059.001', 'T1027'],
+  PS_IEX: ['T1059.001'],
+  PS_InvokeExpression: ['T1059.001'],
+  PS_DownloadString: ['T1059.001', 'T1105'],
+  PS_Base64Decode: ['T1140', 'T1027'],
+  PS_HiddenWindow: ['T1059.001'],
+  PS_PolicyBypass: ['T1059.001'],
+  PS_NonInteractive: ['T1059.001'],
+  LongBase64Arg: ['T1027'],
+  Squiblydoo: ['T1218', 'T1105'],
+  MSHTA_Remote: ['T1218', 'T1105'],
+  WScript_Remote: ['T1059.005', 'T1105'],
+  CertUtil_Decode: ['T1140', 'T1105'],
+  BITSAdmin_Transfer: ['T1105'],
+  Office_Spawns_Shell: ['T1059'],
+  Browser_Spawns_Shell: ['T1059'],
+  Explorer_Encoded_PS: ['T1059.001', 'T1027'],
+};
+
 /**
  * Generează lista de tehnici MITRE pentru un set de detecții.
  *
  * @param {Object} signals
  * @param {Array} signals.evasionIndicators
  * @param {Array} signals.injectionResult
- * @param {Array} signals.entropyResult
  * @param {Array} signals.iocs
  * @param {Array} signals.scriptObfuscation
  * @param {Array} signals.stringDecoded
@@ -125,11 +147,6 @@ function mapToMitre(signals = {}) {
     }
   }
 
-  // Entropy
-  if (signals.entropyResult?.verdict === 'likely_encrypted_or_packed') {
-    addTech('T1027.002', `Entropy ${signals.entropyResult.overall}/8.0 indicates packing`);
-  }
-
   // String decoder
   for (const dec of signals.stringDecoded || []) {
     const techs = CATEGORY_TO_TECHNIQUE[`${dec.encoding}_encoded`] || ['T1140'];
@@ -155,6 +172,43 @@ function mapToMitre(signals = {}) {
   return Array.from(techniques.values());
 }
 
+function mapMemoryProcessToMitre(processResult = {}) {
+  const techniques = new Map();
+  const services = Array.isArray(processResult.services) ? processResult.services : [];
+
+  function addTech(techId, finding) {
+    if (!MITRE_TECHNIQUES[techId]) return;
+    if (!techniques.has(techId)) {
+      techniques.set(techId, {
+        id: techId,
+        ...MITRE_TECHNIQUES[techId],
+        evidence: [],
+      });
+    }
+
+    const evidence = finding?.detail || finding?.type || finding?.tag;
+    if (evidence) techniques.get(techId).evidence.push(evidence);
+  }
+
+  for (const finding of processResult.findings || []) {
+    if (finding.severity === 'info') continue;
+    const direct = MEMORY_FINDING_TO_TECHNIQUE[finding.type] || MEMORY_FINDING_TO_TECHNIQUE[finding.tag] || [];
+    for (const techId of direct) addTech(techId, finding);
+  }
+
+  return Array.from(techniques.values()).map((technique) => ({
+    ...technique,
+    source: {
+      application: processResult.name || 'Unknown process',
+      pid: processResult.pid || null,
+      path: processResult.path || '',
+      parentName: processResult.parentName || '',
+      services,
+      threat: processResult.threat || '',
+    },
+  }));
+}
+
 /**
  * Returnează matricea MITRE completă (pentru UI, gridul gol).
  */
@@ -169,4 +223,4 @@ function getMitreMatrix() {
   return Object.values(tactics);
 }
 
-module.exports = { mapToMitre, getMitreMatrix, MITRE_TECHNIQUES };
+module.exports = { mapToMitre, mapMemoryProcessToMitre, getMitreMatrix, MITRE_TECHNIQUES };

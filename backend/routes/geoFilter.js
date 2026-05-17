@@ -21,7 +21,16 @@ router.get('/', (_req, res) => {
 });
 
 router.patch('/', async (req, res) => {
-  const state = updateGeoFilter(req.body || {});
+  const patch = { ...(req.body || {}) };
+  if (
+    patch.enabled === undefined &&
+    Array.isArray(patch.blockedCountries) &&
+    patch.blockedCountries.length > 0
+  ) {
+    patch.enabled = true;
+  }
+
+  const state = updateGeoFilter(patch);
   await initCountryDomains(state.blockedCountries);
   res.json({
     success: true,

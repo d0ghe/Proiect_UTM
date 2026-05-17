@@ -16,7 +16,6 @@ const {
   parseBoolean,
 } = require('../utils/hybridAnalysis');
 const { scanBufferForHexSignatures, buildSignatureSummary } = require('../utils/hexSignatures');
-const { analyzeEntropy } = require('../utils/entropyAnalysis');
 const { detectEvasion } = require('../utils/evasionDetection');
 const { detectSubbyteInjection } = require('../utils/subbyteInjection');
 const { computeHeuristicScore } = require('../utils/heuristicScorer');
@@ -88,6 +87,29 @@ function splitCriticalYaraMatches(matches, isPortableExecutable) {
     }
     return groups;
   }, { confirmed: [], contextual: [] });
+}
+
+function applyVerdict(score) {
+  if (score >= 85) return 'HIGH_RISK';
+  if (score >= 55) return 'MEDIUM_RISK';
+  if (score >= 15) return 'LOW_RISK';
+  return 'MINIMAL_RISK';
+}
+
+function scoreSupplementalSignals({ iocs, stringDecoded, scriptResult, isPortableExecutable, isScriptLike }) {
+  const decodedFindings = Array.isArray(stringDecoded?.findings) ? stringDecoded.findings : [];
+  const decodedCritical = decodedFindings.filter((finding) => finding.severity === 'critical').length;
+  const decodedWarnings = decodedFindings.filter((finding) => finding.severity === 'warning').length;
+  const decodedScore = Math.min(decodedCritical * 12 + Math.max(0, decodedWarnings - 2) * 2, isPortableExecutable ? 6 : 12);
+  const iocScore = Math.min(iocs?.suspicionScore || 0, isPortableExecutable ? 6 : 14);
+  const scriptScore = isPortableExecutable || !isScriptLike
+    ? 0
+    : Math.min(scriptResult?.riskContribution || 0, 18);
+
+  return Math.min(
+    iocScore + decodedScore + scriptScore,
+    isPortableExecutable ? 12 : 28,
+  );
 }
 
 function ensureQuarantineDir() {
@@ -277,12 +299,10 @@ function createLocalHeuristicResult(file, fileHash) {
 
   // Detecție EICAR text (fast path)
   if (fileContent.includes(EICAR_MARKER)) {
-    const entropyResult = analyzeEntropy(file.buffer);
     const evasionResult = detectEvasion(file.buffer);
     const injectionResult = detectSubbyteInjection(file.buffer);
     const heuristicScore = computeHeuristicScore({
       hexMatches: [],
-      entropyResult,
       evasionResult,
       injectionResult,
     });
@@ -291,7 +311,7 @@ function createLocalHeuristicResult(file, fileHash) {
       detected: true,
       signature: 'EICAR_Test_File (Local Detection)',
       hexMatches: [],
-      deepAnalysis: { entropyResult, evasionResult, injectionResult, heuristicScore },
+      deepAnalysis: { evasionResult, injectionResult, heuristicScore },
       provider: createProviderResult({
         id: 'local-heuristic',
         name: 'Local Heuristic',
@@ -310,8 +330,7 @@ function createLocalHeuristicResult(file, fileHash) {
   const hexResult = scanBufferForHexSignatures(file.buffer);
   const criticalHex = hexResult.matches.filter((m) => m.severity === 'critical');
 
-  // ─── Module de analiză profundă (entropy/evasion/injection/IOC/script/PE) ─
-  const entropyResult   = analyzeEntropy(file.buffer);
+  // ─── Module de analiză profundă (evasion/injection/IOC/script/PE) ─
   const evasionResult   = detectEvasion(file.buffer);
   const injectionResult = detectSubbyteInjection(file.buffer);
   const iocs            = extractIOCs(file.buffer);
@@ -328,7 +347,6 @@ function createLocalHeuristicResult(file, fileHash) {
 
   const heuristicScore  = computeHeuristicScore({
     hexMatches: hexResult.matches,
-    entropyResult,
     evasionResult,
     injectionResult,
     peResult,
@@ -339,21 +357,20 @@ function createLocalHeuristicResult(file, fileHash) {
   const yaraWarning   = yaraResult.matched.filter((m) => m.severity === 'warning');
   const isPortableExecutable = Boolean(peResult?.isValidPE);
   const yaraCriticalGroups = splitCriticalYaraMatches(yaraResult.matched, isPortableExecutable);
-  const scriptRiskContribution = isPortableExecutable && !isScriptLikeFilename(file.originalname)
-    ? 0
-    : (scriptResult.riskContribution || 0);
+  const isScriptLike = isScriptLikeFilename(file.originalname);
   const yaraScore = Math.min(
     yaraCriticalGroups.confirmed.length * 35
     + yaraCriticalGroups.contextual.length * (isPortableExecutable ? 12 : 35)
     + yaraWarning.length * (isPortableExecutable ? 6 : 10),
     isPortableExecutable ? 30 : 60,
   );
-  const supplementalScore = Math.min(
-    (iocs.suspicionScore || 0)
-    + (stringDecoded.riskContribution || 0)
-    + scriptRiskContribution,
-    isPortableExecutable ? 18 : 40,
-  );
+  const supplementalScore = scoreSupplementalSignals({
+    iocs,
+    stringDecoded,
+    scriptResult,
+    isPortableExecutable,
+    isScriptLike,
+  });
 
   // Boost score cu IOC + script + decoded + YARA
   heuristicScore.score = Math.min(
@@ -362,22 +379,17 @@ function createLocalHeuristicResult(file, fileHash) {
     + supplementalScore
     + yaraScore,
   );
-  if (heuristicScore.score >= 85) heuristicScore.verdict = 'HIGH_RISK';
-  else if (heuristicScore.score >= 55) heuristicScore.verdict = 'MEDIUM_RISK';
-  else if (heuristicScore.score >= 15) heuristicScore.verdict = 'LOW_RISK';
-  else heuristicScore.verdict = 'MINIMAL_RISK';
+  heuristicScore.verdict = applyVerdict(heuristicScore.score);
 
   const mitreTechniques = mapToMitre({
     evasionIndicators: evasionResult.indicators,
     injectionResult,
-    entropyResult,
     iocs,
     stringDecoded: stringDecoded.findings,
     scriptObfuscation: scriptResult.findings,
   });
 
   const deepAnalysis = {
-    entropyResult,
     evasionResult,
     injectionResult,
     iocs,

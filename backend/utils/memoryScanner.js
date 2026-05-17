@@ -1,6 +1,7 @@
 'use strict';
 
 const { exec } = require('child_process');
+const { mapMemoryProcessToMitre } = require('./mitreMapping');
 
 const KNOWN_GOOD_PROCESSES = new Set([
   'claude.exe', 'code.exe', 'cursor.exe', 'windsurf.exe', 'codex.exe',
@@ -122,6 +123,13 @@ function normalizeProcessPath(proc) {
   return String(proc.Path || proc.ExecutablePath || '').trim();
 }
 
+function normalizeServiceInfo(service) {
+  const name = String(service?.Name || '').trim();
+  const displayName = String(service?.DisplayName || '').trim();
+  const state = String(service?.State || '').trim();
+  return { name, displayName, state };
+}
+
 function findParent(proc, allProcs = []) {
   return allProcs.find((candidate) => Number(candidate.ProcessId) === Number(proc.ParentProcessId)) || null;
 }
@@ -153,12 +161,17 @@ function isTrustedCodexParent(parent) {
 }
 
 function isOwnScannerCommand(cmdline) {
-  return /get-ciminstance\s+win32_process/i.test(cmdline)
-    && /convertto-json/i.test(cmdline)
-    && /processid/i.test(cmdline)
-    && /commandline/i.test(cmdline)
-    && /parentprocessid/i.test(cmdline)
-    && /workingsetsize/i.test(cmdline);
+  const command = String(cmdline || '');
+  const commonFields = /convertto-json/i.test(command) && /processid/i.test(command);
+  const processEnumeration = /get-ciminstance\s+win32_process/i.test(command)
+    && /commandline/i.test(command)
+    && /parentprocessid/i.test(command)
+    && /workingsetsize/i.test(command);
+  const serviceEnumeration = /get-ciminstance\s+win32_service/i.test(command)
+    && /displayname/i.test(command)
+    && /state/i.test(command);
+
+  return commonFields && (processEnumeration || serviceEnumeration);
 }
 
 function isTrustedAutomationCommand(decoded, cmdline, parent) {
@@ -256,8 +269,9 @@ function assessGenericCommandLine(findings, proc) {
   }
 }
 
-function assessProcess(proc, allProcs = []) {
+function assessProcess(proc, allProcs = [], servicesByPid = {}) {
   const findings = [];
+  const pid = Number(proc.ProcessId);
   const name = normalizeProcessName(proc.Name);
   const originalPath = normalizeProcessPath(proc);
   const path = originalPath.toLowerCase();
@@ -265,6 +279,9 @@ function assessProcess(proc, allProcs = []) {
   const parent = findParent(proc, allProcs);
   const parentId = proc.ParentProcessId;
   const isKnownGood = KNOWN_GOOD_PROCESSES.has(name);
+  const services = (servicesByPid[pid] || [])
+    .map(normalizeServiceInfo)
+    .filter((service) => service.name || service.displayName);
 
   if (path && !isKnownGood) {
     for (const { pattern, name: patternName } of SUSPICIOUS_PATH_PATTERNS) {
@@ -314,7 +331,7 @@ function assessProcess(proc, allProcs = []) {
     ? 'CRITICAL'
     : warningCount >= 1 ? 'SUSPICIOUS' : 'CLEAN';
 
-  return {
+  const result = {
     pid: proc.ProcessId,
     name: proc.Name,
     path: originalPath || null,
@@ -322,6 +339,7 @@ function assessProcess(proc, allProcs = []) {
     memMB: proc.WorkingSetSize ? Math.round(proc.WorkingSetSize / 1024 / 1024) : 0,
     parentId: parentId || null,
     parentName: parent?.Name || '',
+    services,
     isKnownGood,
     findings,
     score,
@@ -329,23 +347,41 @@ function assessProcess(proc, allProcs = []) {
     visibilityLimited: !path,
     infoCount,
   };
+  result.mitreTechniques = mapMemoryProcessToMitre(result);
+  return result;
 }
 
 async function scanProcessMemory() {
   const startedAt = Date.now();
 
-  const rawProcs = await runPS(
-    `Get-CimInstance Win32_Process | ` +
-    `Select-Object ProcessId,Name,Path,ExecutablePath,CommandLine,ParentProcessId,WorkingSetSize | ` +
-    `ConvertTo-Json -Depth 2 -Compress`
-  );
+  const [rawProcs, rawServices] = await Promise.all([
+    runPS(
+      `Get-CimInstance Win32_Process | ` +
+      `Select-Object ProcessId,Name,Path,ExecutablePath,CommandLine,ParentProcessId,WorkingSetSize | ` +
+      `ConvertTo-Json -Depth 2 -Compress`
+    ),
+    runPS(
+      `Get-CimInstance Win32_Service | Where-Object { $_.ProcessId -ne 0 } | ` +
+      `Select-Object ProcessId,Name,DisplayName,State | ` +
+      `ConvertTo-Json -Depth 2 -Compress`
+    ),
+  ]);
 
   const processList = Array.isArray(rawProcs) ? rawProcs : rawProcs ? [rawProcs] : [];
   if (processList.length === 0) {
     return { success: false, error: 'Could not enumerate processes - check PowerShell access.', processes: [], summary: null };
   }
 
-  const results = processList.map((proc) => assessProcess(proc, processList));
+  const serviceList = Array.isArray(rawServices) ? rawServices : rawServices ? [rawServices] : [];
+  const servicesByPid = serviceList.reduce((index, service) => {
+    const pid = Number(service.ProcessId);
+    if (!pid) return index;
+    index[pid] = index[pid] || [];
+    index[pid].push(service);
+    return index;
+  }, {});
+
+  const results = processList.map((proc) => assessProcess(proc, processList, servicesByPid));
   const critical = results.filter((result) => result.threat === 'CRITICAL');
   const suspicious = results.filter((result) => result.threat === 'SUSPICIOUS');
   const infoOnly = results.filter((result) => result.threat === 'CLEAN' && result.infoCount > 0);

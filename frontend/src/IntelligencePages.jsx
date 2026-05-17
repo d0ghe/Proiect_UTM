@@ -6,10 +6,9 @@
  *  - Honeypots
  *  - YARA Rules Editor
  *  - Live Alerts (WebSocket)
- *  - Entropy Heatmap canvas
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const PANEL_HEADER = (kicker, title) => (
   <div className="panel-card__header">
@@ -20,86 +19,97 @@ const PANEL_HEADER = (kicker, title) => (
   </div>
 );
 
-// ─── Entropy Heatmap Canvas ─────────────────────────────────────────────────
-export function EntropyHeatmap({ blocks, height = 60 }) {
-  const canvasRef = useRef(null);
+// MITRE ATT&CK source helpers
+function buildTechniqueMeta(matrix = []) {
+  const meta = {};
+  for (const tactic of matrix || []) {
+    for (const technique of tactic.techniques || []) {
+      meta[technique.id] = {
+        id: technique.id,
+        name: technique.name,
+        tactic: tactic.name,
+        tacticId: tactic.id,
+      };
+    }
+  }
+  return meta;
+}
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !Array.isArray(blocks) || blocks.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const blockWidth = Math.max(1, width / blocks.length);
-    ctx.clearRect(0, 0, width, height);
+function buildTechniqueSourceRows(memoryScan, techniqueMeta) {
+  const rows = [];
+  const processes = Array.isArray(memoryScan?.processes) ? memoryScan.processes : [];
 
-    blocks.forEach((b, idx) => {
-      const e = b.entropy || 0;
-      const ratio = Math.min(1, e / 8);
-      // Verde (low) → galben (med) → roșu (high)
-      let r, g, bl;
-      if (ratio < 0.5) {
-        r = Math.round(60 + ratio * 2 * 195);
-        g = 200;
-        bl = 100;
-      } else {
-        r = 255;
-        g = Math.round(200 - (ratio - 0.5) * 2 * 180);
-        bl = 60;
-      }
-      ctx.fillStyle = `rgba(${r},${g},${bl},0.85)`;
-      ctx.fillRect(idx * blockWidth, 0, Math.ceil(blockWidth), height);
-    });
-  }, [blocks, height]);
-
-  if (!blocks || blocks.length === 0) {
-    return <div className="empty-state">No entropy blocks to display.</div>;
+  for (const proc of processes) {
+    for (const technique of proc.mitreTechniques || []) {
+      const meta = techniqueMeta[technique.id] || technique;
+      const services = Array.isArray(technique.source?.services)
+        ? technique.source.services
+        : Array.isArray(proc.services) ? proc.services : [];
+      const serviceLabel = services
+        .map((service) => {
+          const displayName = service.displayName || service.DisplayName || '';
+          const name = service.name || service.Name || '';
+          if (displayName && name && displayName !== name) return `${displayName} (${name})`;
+          return displayName || name;
+        })
+        .filter(Boolean)
+        .join(', ');
+      rows.push({
+        id: `${technique.id}-${proc.pid}-${rows.length}`,
+        techniqueId: technique.id,
+        techniqueName: meta.name || technique.name,
+        tactic: meta.tactic || technique.tactic,
+        application: technique.source?.application || proc.name || 'Unknown process',
+        serviceLabel,
+        pid: technique.source?.pid || proc.pid,
+        path: technique.source?.path || proc.path || '',
+        parentName: technique.source?.parentName || proc.parentName || '',
+        threat: technique.source?.threat || proc.threat || '',
+        evidence: (technique.evidence || []).filter(Boolean),
+      });
+    }
   }
 
-  return (
-    <div className="entropy-heatmap">
-      <canvas ref={canvasRef} width={800} height={height} style={{ width: '100%', height, borderRadius: 6 }} />
-      <div className="entropy-heatmap__legend">
-        <span>0.0</span>
-        <span>4.0</span>
-        <span>8.0 (max)</span>
-      </div>
-    </div>
+  const severityRank = { CRITICAL: 0, SUSPICIOUS: 1, CLEAN: 2 };
+  return rows.sort((left, right) =>
+    (severityRank[left.threat] ?? 3) - (severityRank[right.threat] ?? 3)
+    || left.techniqueId.localeCompare(right.techniqueId)
   );
 }
 
-// ─── MITRE ATT&CK Heat-map ──────────────────────────────────────────────────
-function hitColor(hits, maxHits) {
-  if (!hits || hits === 0) return { bg: '#1a1a1a', border: '#2a2a2a', text: '#555' };
-  const ratio = Math.min(1, hits / Math.max(1, maxHits));
-  if (ratio < 0.25)  return { bg: 'rgba(255,149,0,0.18)',  border: 'rgba(255,149,0,0.5)',  text: '#ff9500' };
-  if (ratio < 0.60)  return { bg: 'rgba(255,69,58,0.25)',  border: 'rgba(255,69,58,0.6)',  text: '#ff453a' };
-  return               { bg: 'rgba(255,69,58,0.50)',  border: '#ff453a',               text: '#fff' };
-}
-
 // ─── MITRE ATT&CK Matrix Page ───────────────────────────────────────────────
-export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
-  const [view, setView] = useState('heatmap'); // 'heatmap' | 'matrix'
-
-  // Use enriched heatmap tactics if available, otherwise fall back to basic matrix
-  const tactics    = heatmap?.tactics?.length ? heatmap.tactics : (matrix || []).map((t) => ({
+export function MitrePage({ matrix, intel, memoryScan, loading, onRefresh }) {
+  const techniqueMeta = buildTechniqueMeta(matrix || []);
+  const sourceRows = buildTechniqueSourceRows(memoryScan, techniqueMeta);
+  const sourceCounts = sourceRows.reduce((counts, row) => {
+    counts[row.techniqueId] = (counts[row.techniqueId] || 0) + 1;
+    return counts;
+  }, {});
+  const intelCounts = (intel?.topMitreTechniques || []).reduce((counts, item) => {
+    counts[item.key] = item.count;
+    return counts;
+  }, {});
+  const counts = { ...sourceCounts };
+  Object.entries(intelCounts).forEach(([id, count]) => {
+    counts[id] = (counts[id] || 0) + count;
+  });
+  const tactics = (matrix || []).map((t) => ({
     ...t,
-    techniques: t.techniques.map((tech) => ({ ...tech, totalHits: 0, dailyHits: [] })),
+    techniques: t.techniques.map((tech) => ({ ...tech, totalHits: counts[tech.id] || 0 })),
   }));
-  const maxHits    = heatmap?.maxHits || 1;
-  const totalHits  = Object.values(intel?.topMitreTechniques?.reduce?.((a, t) => { a[t.key] = t.count; return a; }, {}) || {}).reduce((s, v) => s + v, 0);
+  const totalHits = Object.values(counts).reduce((sum, count) => sum + count, 0);
   const activeTech = tactics.flatMap((t) => t.techniques).filter((t) => (t.totalHits || 0) > 0).length;
+  const triggeringApps = new Set(sourceRows.map((row) => `${row.application}:${row.pid}`)).size;
 
   return (
     <div className="page-content">
       <div className="page-header">
         <div>
           <p className="page-breadcrumb">Argus / MITRE ATT&CK</p>
-          <h1 className="page-title">ATT&CK Navigator Heat-map</h1>
-          <p className="page-subtitle">Techniques detected in the last 30 days, colored by frequency - ATT&CK Navigator style.</p>
+          <h1 className="page-title">ATT&CK Matrix</h1>
+          <p className="page-subtitle">Techniques observed by Argus, with the application or service that triggered each signal.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button className={`control-btn${view === 'heatmap' ? '' : ' control-btn--ghost'}`} onClick={() => setView('heatmap')} type="button">Heat-map</button>
-          <button className={`control-btn${view === 'matrix' ? '' : ' control-btn--ghost'}`} onClick={() => setView('matrix')} type="button">Matrix</button>
           <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
         </div>
       </div>
@@ -108,67 +118,69 @@ export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
       <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
         {[
           { label: 'Techniques Triggered', value: activeTech, color: '#ff453a' },
-          { label: 'Total Detections', value: totalHits || Object.values(intel?.topMitreTechniques || []).reduce((s, t) => s + t.count, 0), color: '#f5a623' },
+          { label: 'Total Detections', value: totalHits, color: '#f5a623' },
           { label: 'Tactics Covered', value: tactics.filter((t) => t.techniques.some((te) => te.totalHits > 0)).length, color: '#34c759' },
+          { label: 'Triggering Apps', value: triggeringApps, color: '#64d2ff' },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ flex: '1 1 160px', padding: '0.85rem 1.1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
             <div style={{ fontSize: '0.75rem', color: '#636366', marginBottom: '0.3rem' }}>{label}</div>
             <div style={{ fontSize: '1.6rem', fontWeight: 700, color }}>{value}</div>
           </div>
         ))}
-        {/* Legend */}
-        <div style={{ flex: '1 1 220px', padding: '0.85rem 1.1rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
-          <div style={{ fontSize: '0.75rem', color: '#636366', marginBottom: '0.5rem' }}>Intensity Legend</div>
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.72rem' }}>
-            {[['No hits', '#1a1a1a', '#2a2a2a'], ['Low', 'rgba(255,149,0,0.18)', 'rgba(255,149,0,0.5)'], ['Medium', 'rgba(255,69,58,0.25)', 'rgba(255,69,58,0.6)'], ['High', 'rgba(255,69,58,0.5)', '#ff453a']].map(([lbl, bg, border]) => (
-              <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                <div style={{ width: 14, height: 14, borderRadius: 3, background: bg, border: `1px solid ${border}` }} />
-                <span style={{ color: '#888' }}>{lbl}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
       {loading ? <div className="empty-state">Loading MITRE data...</div> : null}
 
-      {view === 'heatmap' ? (
-        /* Heat-map view — all tactics side by side */
-        <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-          {tactics.map((tactic) => (
-            <div key={tactic.id} style={{ minWidth: 140, flex: '1 1 140px' }}>
-              {/* Tactic header */}
-              <div style={{ padding: '0.5rem 0.6rem', background: '#1e1e1e', borderRadius: '6px 6px 0 0', borderBottom: '2px solid #ff453a', marginBottom: 2 }}>
-                <div style={{ fontSize: '0.65rem', color: '#ff453a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tactic.id}</div>
-                <div style={{ fontSize: '0.75rem', color: '#e8e8e8', fontWeight: 600, lineHeight: 1.3 }}>{tactic.name}</div>
-              </div>
-              {/* Technique cells */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {tactic.techniques.map((tech) => {
-                  const hits = tech.totalHits || 0;
-                  const { bg, border, text } = hitColor(hits, maxHits);
-                  return (
-                    <div
-                      key={tech.id}
-                      title={`${tech.id}: ${tech.name}\nDetections: ${hits}`}
-                      style={{
-                        padding: '0.35rem 0.5rem', borderRadius: 4,
-                        background: bg, border: `1px solid ${border}`,
-                        cursor: 'default', transition: 'all 0.15s',
-                      }}
-                    >
-                      <div style={{ fontSize: '0.65rem', color: text, fontWeight: 700 }}>{tech.id}</div>
-                      <div style={{ fontSize: '0.62rem', color: hits > 0 ? '#ccc' : '#444', lineHeight: 1.2, marginTop: 1 }}>{tech.name}</div>
-                      {hits > 0 && <div style={{ fontSize: '0.6rem', color: text, fontWeight: 600, marginTop: 2 }}>{hits}×</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        /* Classic matrix view */
+      <section className="panel-card page-section-gap">
+        {PANEL_HEADER('Source Attribution', 'Triggering Applications / Services')}
+        {sourceRows.length === 0 ? (
+          <div className="empty-state">
+            No application-level MITRE triggers yet. Run a Memory Scan to attach techniques to running processes.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Technique</th>
+                  <th>Application / Service</th>
+                  <th>PID</th>
+                  <th>Parent</th>
+                  <th>Evidence</th>
+                  <th>Severity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceRows.slice(0, 80).map((row) => (
+                  <tr key={row.id}>
+                    <td>
+                      <strong>{row.techniqueId}</strong>
+                      <br />
+                      <span style={{ color: '#888' }}>{row.techniqueName}</span>
+                    </td>
+                    <td>
+                      <strong>{row.application}</strong>
+                      {row.serviceLabel ? <div style={{ color: '#8ecbff', fontSize: '0.75rem', marginTop: 2 }}>Service: {row.serviceLabel}</div> : null}
+                      {row.path ? <div style={{ color: '#666', fontSize: '0.75rem', marginTop: 2 }}>{row.path}</div> : null}
+                    </td>
+                    <td>{row.pid || '-'}</td>
+                    <td>{row.parentName || '-'}</td>
+                    <td>{row.evidence[0] || '-'}</td>
+                    <td>
+                      <span className={`severity-pill severity-pill--${row.threat === 'CRITICAL' ? 'critical' : 'warning'}`}>
+                        {row.threat || 'detected'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel-card">
+        {PANEL_HEADER('Enterprise Matrix', 'Observed Techniques')}
         <div className="mitre-matrix">
           {tactics.map((tactic) => (
             <div className="mitre-tactic" key={tactic.id}>
@@ -186,7 +198,7 @@ export function MitrePage({ matrix, intel, heatmap, loading, onRefresh }) {
             </div>
           ))}
         </div>
-      )}
+      </section>
     </div>
   );
 }

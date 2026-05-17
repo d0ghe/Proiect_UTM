@@ -12,7 +12,7 @@ const verifyToken = require('../middleware/verifyToken');
 const { requireRole } = require('../middleware/requireRole');
 
 const { getMitreMatrix, mapToMitre } = require('../utils/mitreMapping');
-const { getIntelDashboard, resetIntel, getMitreHeatmap } = require('../utils/threatIntel');
+const { getIntelDashboard, resetIntel } = require('../utils/threatIntel');
 const { plantCanaries, listCanaries, listEvents, removeAllCanaries, checkCanaries } = require('../utils/honeypot');
 const { getBaselineSummary, recordSample, resetBaseline } = require('../utils/behavioralBaseline');
 const { getAlerts: getRansomAlerts, getCurrentWindow } = require('../utils/ransomwareCanary');
@@ -22,7 +22,6 @@ const { extractIOCs } = require('../utils/iocExtractor');
 const { decodeStrings } = require('../utils/stringDecoder');
 const { analyzeScript } = require('../utils/scriptDeobfuscator');
 const { parseEml } = require('../utils/emlParser');
-const { analyzeEntropy } = require('../utils/entropyAnalysis');
 const { detectEvasion } = require('../utils/evasionDetection');
 const { detectSubbyteInjection } = require('../utils/subbyteInjection');
 const { computeHeuristicScore } = require('../utils/heuristicScorer');
@@ -49,10 +48,6 @@ router.get('/intel/dashboard', (_req, res) => {
 router.post('/intel/reset', requireRole('admin'), (_req, res) => {
   resetIntel();
   res.json({ success: true, message: 'Threat intel data reset.' });
-});
-
-router.get('/intel/mitre-heatmap', (_req, res) => {
-  res.json({ success: true, heatmap: getMitreHeatmap() });
 });
 
 // ─── Honeypots ────────────────────────────────────────────────────────────
@@ -146,11 +141,11 @@ router.post('/analyze/deep', upload.single('file'), (req, res) => {
   const filename = file.originalname || 'sample.bin';
 
   const hexResult = scanBufferForHexSignatures(buf);
-  const entropyResult = analyzeEntropy(buf);
   const evasionResult = detectEvasion(buf);
   const injectionResult = detectSubbyteInjection(buf);
   const iocs = extractIOCs(buf);
-  const stringDecoded = decodeStrings(buf).findings;
+  const stringDecodedResult = decodeStrings(buf);
+  const stringDecoded = stringDecodedResult.findings;
   const scriptResult = analyzeScript(buf, filename);
   const peResult = parsePE(buf);
 
@@ -159,18 +154,20 @@ router.post('/analyze/deep', upload.single('file'), (req, res) => {
 
   const heuristicScore = computeHeuristicScore({
     hexMatches: hexResult.matches,
-    entropyResult,
     evasionResult,
     injectionResult,
     peResult,
   });
 
   const isPortableExecutable = Boolean(peResult?.isValidPE);
+  const decodedCritical = stringDecoded.filter((finding) => finding.severity === 'critical').length;
+  const decodedWarnings = stringDecoded.filter((finding) => finding.severity === 'warning').length;
+  const isScriptLike = /\.(ps1|psm1|js|jse|vbs|vbe|bat|cmd|wsf|wsh|hta|sh)$/i.test(filename);
   const supplementalScore = Math.min(
-    (iocs.suspicionScore || 0)
-    + (decodeStrings(buf).riskContribution || 0)
-    + (scriptResult.riskContribution || 0),
-    isPortableExecutable ? 25 : 40,
+    Math.min(iocs.suspicionScore || 0, isPortableExecutable ? 6 : 14)
+    + Math.min(decodedCritical * 12 + Math.max(0, decodedWarnings - 2) * 2, isPortableExecutable ? 6 : 12)
+    + (isPortableExecutable || !isScriptLike ? 0 : Math.min(scriptResult.riskContribution || 0, 18)),
+    isPortableExecutable ? 12 : 28,
   );
   const yaraScore = Math.min(
     yaraResult.matched.filter((m) => m.severity === 'critical').length * 35
@@ -188,7 +185,6 @@ router.post('/analyze/deep', upload.single('file'), (req, res) => {
   const mitreTechniques = mapToMitre({
     evasionIndicators: evasionResult.indicators,
     injectionResult,
-    entropyResult,
     iocs,
     stringDecoded,
     scriptObfuscation: scriptResult.findings,
@@ -199,7 +195,6 @@ router.post('/analyze/deep', upload.single('file'), (req, res) => {
     filename,
     sizeBytes: buf.length,
     hexMatches: hexResult.matches,
-    entropyResult,
     evasionResult,
     injectionResult,
     iocs,
@@ -220,17 +215,15 @@ router.post('/analyze/eml', upload.single('file'), (req, res) => {
     const parsed = parseEml(req.file.buffer);
     const attachmentReports = parsed.attachments.map((att) => {
       const hex = scanBufferForHexSignatures(att.buffer);
-      const entropy = analyzeEntropy(att.buffer);
       const evasion = detectEvasion(att.buffer);
       const injection = detectSubbyteInjection(att.buffer);
       const pe = parsePE(att.buffer);
-      const score = computeHeuristicScore({ hexMatches: hex.matches, entropyResult: entropy, evasionResult: evasion, injectionResult: injection, peResult: pe });
+      const score = computeHeuristicScore({ hexMatches: hex.matches, evasionResult: evasion, injectionResult: injection, peResult: pe });
       return {
         filename: att.filename,
         contentType: att.contentType,
         size: att.size,
         hexMatches: hex.matches,
-        entropy,
         evasion,
         injection,
         score,

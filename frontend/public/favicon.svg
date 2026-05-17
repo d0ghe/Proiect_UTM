@@ -24,7 +24,6 @@
       </feMerge>
     </filter>
   </defs>
-  <rect width="256" height="256" fill="url(#bg)"/>
   <path d="M128 31c24 18 49 27 76 28v58c0 45-25 82-76 108-51-26-76-63-76-108V59c27-1 52-10 76-28Z" fill="#071827" stroke="url(#shield)" stroke-width="7" filter="url(#glow)"/>
   <path d="M128 47c20 13 39 21 60 24v45c0 34-19 63-60 85V47Z" fill="#d8fbff" opacity="0.13"/>
   <path d="M128 59a69 69 0 0 1 64 43l-64 29Z" fill="url(#sweep)"/>

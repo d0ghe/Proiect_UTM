@@ -42,10 +42,14 @@ const COUNTRY_COORDS = {
 // Each country has multiple mirror URLs — fetched in order, first success wins.
 const COUNTRY_SOURCES = {
   CN: [
+    'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/classical/cn.yaml',
+    'https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list',
     'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/cn',
     'https://cdn.jsdelivr.net/gh/v2fly/domain-list-community@master/data/cn',
   ],
   RU: [
+    'https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-clashx.lst',
+    'https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-dnsmasq-nfset.lst',
     'https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/ru',
     'https://cdn.jsdelivr.net/gh/v2fly/domain-list-community@master/data/ru',
   ],
@@ -83,6 +87,49 @@ const COUNTRY_SOURCES = {
   ],
 };
 
+const COUNTRY_TLD_ALIASES = {
+  GB: ['uk'],
+  RU: ['su', 'xn--p1ai', 'xn--p1acf'],
+  CN: ['xn--fiqs8s', 'xn--fiqz9s', 'xn--55qx5d', 'xn--io0a7i'],
+  HK: ['xn--j6w193g'],
+  TW: ['xn--kprw13d', 'xn--kpry57d'],
+  KR: ['xn--3e0b707e'],
+  BY: ['xn--90ais'],
+  IR: ['xn--mgba3a4f16a'],
+  KZ: ['xn--80ao21a'],
+  GE: ['xn--node'],
+  AM: ['xn--y9a3aq'],
+  IN: ['xn--h2brj9c', 'xn--45br5cyl', 'xn--xkc2dl3a5ee0h', 'xn--mgbbh1a71e'],
+};
+
+const COUNTRY_CURATED_DOMAINS = {
+  CN: [
+    'baidu.com', 'qq.com', 'weibo.com', 'bilibili.com', 'douyin.com', 'taobao.com',
+    'tmall.com', 'jd.com', 'alipay.com', 'aliyun.com', '163.com', 'sina.com.cn',
+    'sohu.com', 'zhihu.com', 'xiaomi.com', 'huawei.com', 'bytedance.com',
+  ],
+  RU: [
+    'vk.com', 'ok.ru', 'yandex.com', 'yandex.net', 'mail.ru', 'rambler.ru',
+    'rutube.ru', 'gazprom.ru', 'sberbank.ru', 'gosuslugi.ru', 'rbc.ru', 'ria.ru',
+    'tass.ru', 'rt.com', 'sputniknews.com',
+  ],
+  IR: ['digikala.com', 'aparat.com', 'cafebazaar.ir', 'varzesh3.com', 'namava.ir'],
+  VN: ['zing.vn', 'zalo.me', 'vnexpress.net', 'vietnamnet.vn', '24h.com.vn'],
+  IN: ['hotstar.com', 'flipkart.com', 'paytm.com', 'timesofindia.indiatimes.com', 'ndtv.com'],
+  TR: ['hurriyet.com.tr', 'sahibinden.com', 'trendyol.com', 'hepsiburada.com', 'milliyet.com.tr'],
+  UA: ['ukr.net', 'pravda.com.ua', 'rozetka.com.ua', 'privatbank.ua'],
+  BR: ['globo.com', 'uol.com.br', 'terra.com.br', 'mercadolivre.com.br'],
+  ID: ['detik.com', 'kompas.com', 'tokopedia.com', 'bukalapak.com'],
+  TH: ['pantip.com', 'sanook.com', 'kapook.com', 'thairath.co.th'],
+  PH: ['abs-cbn.com', 'gmanetwork.com', 'inquirer.net', 'rappler.com'],
+  PK: ['dawn.com', 'geo.tv', 'jang.com.pk', 'olx.com.pk'],
+  NG: ['nairaland.com', 'punchng.com', 'vanguardngr.com', 'jumia.com.ng'],
+  BY: ['tut.by', 'onliner.by', 'belta.by'],
+  KZ: ['tengrinews.kz', 'zakon.kz', 'kaspi.kz'],
+  AZ: ['trend.az', 'azernews.az'],
+  GE: ['interpressnews.ge', 'myauto.ge'],
+};
+
 const CACHE_DIR = path.join(__dirname, '../store/geo-country-cache');
 
 // In-memory domain sets per tara: { CN: Set([...]), RU: Set([...]) }
@@ -114,6 +161,88 @@ function parseV2flyIncludes(raw) {
     .filter(Boolean);
 }
 
+function normalizeDomainEntry(value) {
+  let candidate = String(value || '').split('#')[0].trim();
+  if (!candidate) return '';
+
+  candidate = candidate
+    .replace(/^-\s*/, '')
+    .replace(/^payload:\s*/i, '')
+    .replace(/^@@\|\|/, '')
+    .replace(/^\|\|/, '')
+    .replace(/\^$/, '')
+    .replace(/^\+\./, '')
+    .replace(/^\*\./, '')
+    .replace(/^https?:\/\//i, '')
+    .trim();
+
+  if (/^(include|keyword|regexp):/i.test(candidate)) return '';
+  if (/^(ip-cidr|ip-cidr6|geoip|process-name|final|match),/i.test(candidate)) return '';
+
+  const clashMatch = candidate.match(/^(?:DOMAIN|DOMAIN-SUFFIX|DOMAIN-FULL|HOST|HOST-SUFFIX),\s*([^,\s]+)/i);
+  if (clashMatch) {
+    candidate = clashMatch[1];
+  }
+
+  const dnsmasqMatch = candidate.match(/(?:nftset|ipset|server|address)=\/([^/]+)\//i);
+  if (dnsmasqMatch) {
+    candidate = dnsmasqMatch[1];
+  }
+
+  candidate = candidate
+    .replace(/^(?:domain|full):/i, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/^\.+|\.+$/g, '')
+    .toLowerCase();
+
+  if (candidate.includes(' ')) {
+    const parts = candidate.split(/\s+/).filter(Boolean);
+    candidate = /^(\d{1,3}\.){3}\d{1,3}$/.test(parts[0]) ? parts[1] : parts[0];
+  }
+
+  if (
+    !candidate ||
+    !candidate.includes('.') ||
+    candidate.includes('..') ||
+    /[^a-z0-9.-]/i.test(candidate) ||
+    /^(\d{1,3}\.){3}\d{1,3}$/.test(candidate)
+  ) {
+    return '';
+  }
+
+  return candidate;
+}
+
+function parseCountryDomains(raw) {
+  return [...new Set(
+    String(raw || '')
+      .split(/\r?\n/)
+      .map((line) => normalizeDomainEntry(line))
+      .filter(Boolean),
+  )];
+}
+
+function uniqueDomains(domains) {
+  return [...new Set((Array.isArray(domains) ? domains : [])
+    .map((domain) => normalizeDomainEntry(domain))
+    .filter(Boolean))];
+}
+
+function getCountryDomainSuffixes(country) {
+  const code = String(country || '').toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return [];
+
+  return [...new Set([
+    code.toLowerCase(),
+    ...(COUNTRY_TLD_ALIASES[code] || []),
+  ].map((suffix) => String(suffix || '').replace(/^\.+|\.+$/g, '').toLowerCase()).filter(Boolean))];
+}
+
+function getBuiltInCountryDomains(country) {
+  return uniqueDomains(COUNTRY_CURATED_DOMAINS[String(country || '').toUpperCase()] || []);
+}
+
 /* ── Functii de cache pe disk ──────────────────────────────────────────────── */
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -127,7 +256,7 @@ function readCachedDomains(country) {
   const file = getCachePath(country);
   if (!fs.existsSync(file)) return null;
   const raw = fs.readFileSync(file, 'utf8');
-  return { domains: raw.split('\n').filter(Boolean), mtime: fs.statSync(file).mtime.toISOString() };
+  return { domains: uniqueDomains(raw.split('\n')), mtime: fs.statSync(file).mtime.toISOString() };
 }
 
 /* ── Timeout-compatible fetch (Node 16 + 18+) ─────────────────────────────── */
@@ -187,62 +316,128 @@ async function fetchV2flyList(listName, visited = new Set()) {
   throw lastErr || new Error('All mirrors failed');
 }
 
-async function fetchCountryDomains(country) {
-  console.log(`[geo] Fetching ${country} domain metadata from v2fly`);
-  const domains = await fetchV2flyList(String(country).toLowerCase());
-  console.log(`[geo] ${country}: ${domains.length} domains after include expansion`);
-  return domains;
+async function fetchTextSourceDomains(sourceUrl) {
+  const res = await fetchWithTimeout(sourceUrl, 40000);
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  return parseCountryDomains(text);
 }
 
-function buildGeoOnlyStatus(country, message = 'No community domain list is available; IP geolocation is active.') {
+async function fetchCountryDomains(country) {
+  const code = String(country || '').toUpperCase();
+  const lower = code.toLowerCase();
+  const domains = [...getBuiltInCountryDomains(code)];
+  const errors = [];
+  let remoteCount = 0;
+  let triedV2fly = false;
+
+  console.log(`[geo] Fetching ${code} website metadata`);
+
+  for (const sourceUrl of COUNTRY_SOURCES[code] || []) {
+    try {
+      const isV2fly = /domain-list-community/i.test(sourceUrl);
+      if (isV2fly) {
+        if (triedV2fly) continue;
+        triedV2fly = true;
+        const fetched = await fetchV2flyList(lower);
+        remoteCount += fetched.length;
+        domains.push(...fetched);
+        continue;
+      }
+
+      const fetched = await fetchTextSourceDomains(sourceUrl);
+      remoteCount += fetched.length;
+      domains.push(...fetched);
+    } catch (error) {
+      console.warn(`[geo] source failed (${code}): ${sourceUrl} - ${error.message}`);
+      errors.push(`${sourceUrl}: ${error.message}`);
+    }
+  }
+
+  if (!triedV2fly) {
+    try {
+      const fetched = await fetchV2flyList(lower);
+      remoteCount += fetched.length;
+      domains.push(...fetched);
+    } catch (error) {
+      console.warn(`[geo] v2fly fallback failed (${code}): ${error.message}`);
+      errors.push(`v2fly:${lower}: ${error.message}`);
+    }
+  }
+
+  const unique = uniqueDomains(domains);
+  console.log(`[geo] ${code}: ${unique.length} domains, ${getCountryDomainSuffixes(code).length} suffix rules`);
   return {
-    count: 0,
-    synced: true,
-    lastSync: new Date().toISOString(),
-    error: '',
+    domains: unique,
+    remoteCount,
+    builtInCount: getBuiltInCountryDomains(code).length,
+    suffixes: getCountryDomainSuffixes(code),
+    errors,
+  };
+}
+
+function buildCountrySyncStatus(country, options = {}) {
+  const code = String(country || '').toUpperCase();
+  const domains = uniqueDomains(options.domains || []);
+  const suffixes = getCountryDomainSuffixes(code);
+  const domainCount = domains.length;
+  const suffixCount = suffixes.length;
+  const error = Array.isArray(options.errors)
+    ? options.errors.join(' | ')
+    : String(options.error || '');
+
+  return {
+    count: domainCount + suffixCount,
+    domainCount,
+    suffixCount,
+    builtInCount: Number(options.builtInCount || getBuiltInCountryDomains(code).length),
+    remoteCount: Number(options.remoteCount || 0),
+    suffixes,
+    synced: options.synced !== false,
+    lastSync: options.lastSync || new Date().toISOString(),
+    error,
     geoIp: true,
-    mode: 'ip-geolocation',
-    message,
-    country,
+    mode: 'country-suffix+domains+ip-geolocation',
+    message: domainCount > 0
+      ? 'Country website rules and IP geolocation are active.'
+      : 'Country ccTLD rules and IP geolocation are active.',
+    country: code,
   };
 }
 
 async function syncCountryDomains(countries) {
   ensureCacheDir();
+  countries = Array.from(new Set((Array.isArray(countries) ? countries : [])
+    .map((country) => String(country || '').toUpperCase())
+    .filter((country) => /^[A-Z]{2}$/.test(country))));
   const results = {};
 
   await Promise.all(countries.map(async (country) => {
     try {
-      const domains = await fetchCountryDomains(country);
-      if (domains.length > 0) {
-        fs.writeFileSync(getCachePath(country), domains.join('\n'), 'utf8');
-        countryDomainSets[country]  = new Set(domains);
-        countrySyncStatus[country]  = {
-          count: domains.length,
-          synced: true,
-          lastSync: new Date().toISOString(),
-          error: '',
-          geoIp: true,
-          mode: 'domains+ip-geolocation',
-          country,
-        };
-      } else {
-        countryDomainSets[country] = new Set();
-        countrySyncStatus[country] = buildGeoOnlyStatus(country);
-      }
+      const result = await fetchCountryDomains(country);
+      const domains = uniqueDomains(result.domains);
+      fs.writeFileSync(getCachePath(country), domains.join('\n'), 'utf8');
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
+        builtInCount: result.builtInCount,
+        remoteCount: result.remoteCount,
+        errors: result.errors,
+        synced: true,
+        lastSync: new Date().toISOString(),
+      });
       results[country] = countrySyncStatus[country];
     } catch (err) {
       const cached = readCachedDomains(country);
-      if (cached) countryDomainSets[country] = new Set(cached.domains);
-      countrySyncStatus[country] = {
-        count: cached?.domains.length || 0,
+      const domains = uniqueDomains([...(cached?.domains || []), ...getBuiltInCountryDomains(country)]);
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
         synced: false,
         lastSync: cached?.mtime || null,
         error: err.message,
-        geoIp: true,
-        mode: cached?.domains.length ? 'cached-domains+ip-geolocation' : 'ip-geolocation',
-        country,
-      };
+      });
       results[country] = countrySyncStatus[country];
     }
   }));
@@ -252,23 +447,30 @@ async function syncCountryDomains(countries) {
 
 // Incarca din cache la startup/prima folosire
 async function initCountryDomains(countries) {
+  countries = Array.from(new Set((Array.isArray(countries) ? countries : [])
+    .map((country) => String(country || '').toUpperCase())
+    .filter((country) => /^[A-Z]{2}$/.test(country))));
+
   for (const country of countries) {
     if (countryDomainSets[country]) continue;
     const cached = readCachedDomains(country);
+    const builtIn = getBuiltInCountryDomains(country);
     if (cached && cached.domains.length > 0) {
-      countryDomainSets[country] = new Set(cached.domains);
-      countrySyncStatus[country] = {
-        count: cached.domains.length,
+      const domains = uniqueDomains([...cached.domains, ...builtIn]);
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
         synced: true,
         lastSync: cached.mtime,
-        error: '',
-        geoIp: true,
-        mode: 'cached-domains+ip-geolocation',
-        country,
-      };
+      });
     } else {
-      countryDomainSets[country] = new Set();
-      countrySyncStatus[country] = buildGeoOnlyStatus(country, 'IP geolocation is active; no domain cache is required.');
+      const domains = uniqueDomains(builtIn);
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
+        synced: true,
+        lastSync: null,
+      });
     }
   }
 }
@@ -282,19 +484,23 @@ function getCountrySyncStatus(countries = []) {
   requested.forEach((country) => {
     if (countrySyncStatus[country]) return;
     const cached = readCachedDomains(country);
+    const builtIn = getBuiltInCountryDomains(country);
     if (cached && cached.domains.length > 0) {
-      countryDomainSets[country] = new Set(cached.domains);
-      countrySyncStatus[country] = {
-        count: cached.domains.length,
+      const domains = uniqueDomains([...cached.domains, ...builtIn]);
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
         synced: true,
         lastSync: cached.mtime,
-        error: '',
-        geoIp: true,
-        mode: 'cached-domains+ip-geolocation',
-        country,
-      };
+      });
     } else {
-      countrySyncStatus[country] = buildGeoOnlyStatus(country, 'IP geolocation is active; no domain cache is required.');
+      const domains = uniqueDomains(builtIn);
+      countryDomainSets[country] = new Set(domains);
+      countrySyncStatus[country] = buildCountrySyncStatus(country, {
+        domains,
+        synced: true,
+        lastSync: null,
+      });
     }
   });
 
@@ -316,11 +522,11 @@ function isDomainInCountrySet(hostname, country) {
 }
 
 /* ── TLD-based fallback ────────────────────────────────────────────────────── */
-const TLD_MAP = {
-  ...Object.fromEntries(Object.keys(COUNTRY_COORDS).map((country) => [country.toLowerCase(), country])),
-  su: 'RU',
-  uk: 'GB',
-};
+const TLD_MAP = Object.fromEntries(
+  Object.keys(COUNTRY_COORDS).flatMap((country) =>
+    getCountryDomainSuffixes(country).map((suffix) => [suffix, country])
+  )
+);
 
 function normalizeHostname(value) {
   let hostname = String(value || '').trim();
@@ -570,5 +776,5 @@ async function isGeoBlocked(hostname) {
 module.exports = {
   isGeoBlocked, getCountry, getRecentAttacks, addContentBlock,
   syncCountryDomains, initCountryDomains, getCountrySyncStatus, getGeoConnections, COUNTRY_SOURCES,
-  parseV2flyDomains, normalizeHostname, countryFromTld,
+  parseV2flyDomains, parseCountryDomains, getCountryDomainSuffixes, normalizeHostname, countryFromTld,
 };

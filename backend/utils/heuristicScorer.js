@@ -1,8 +1,10 @@
 /**
  * Heuristic Scoring Engine
  *
- * Agregă semnalele din toate modulele de analiză (hex signatures, entropie,
- * detecție evaziune, injecție sub-byte) într-un scor de risc unificat 0–100.
+ * Agregă semnalele explicabile din modulele de analiză într-un scor de risc
+ * unificat 0-100. Entropia este intenționat exclusă din scor deoarece fișierele
+ * comprimate, media și binarele legitime pot avea entropie mare fără să fie
+ * malițioase.
  *
  * Scoruri:
  *  0–14   → MINIMAL_RISK  — niciun indicator semnificativ
@@ -14,7 +16,6 @@
 /**
  * @typedef {Object} ScoringInput
  * @property {Array}  hexMatches      - Rezultate din hexSignatures.js
- * @property {Object} entropyResult   - Rezultat din analyzeEntropy()
  * @property {Object} evasionResult   - Rezultat din detectEvasion()
  * @property {Object} injectionResult - Rezultat din detectSubbyteInjection()
  * @property {Object} peResult        - Rezultat din parsePE(), daca fisierul este PE
@@ -35,27 +36,27 @@ function scoreEvasionIndicator(indicator, isPortableExecutable) {
     // For PE files these are usually normal Windows imports. Treat them as
     // context, not proof, unless they appear in a larger suspicious cluster.
     if (isPortableExecutable) {
-      if (matchCount >= 8) return 14;
-      if (matchCount >= 4) return 8;
-      return 3;
+      if (matchCount >= 8) return 8;
+      if (matchCount >= 4) return 4;
+      return 1;
     }
 
-    return indicator.severity === 'critical' ? 25 : 10;
+    return indicator.severity === 'critical' ? 16 : 6;
   }
 
   if (indicator?.category === 'anti_debug') {
-    return isPortableExecutable ? Math.min(12, matchCount * 3) : 10;
+    return isPortableExecutable ? Math.min(8, matchCount * 2) : 8;
   }
 
   if (indicator?.category === 'anti_vm') {
-    return isPortableExecutable ? Math.min(10, matchCount * 2) : 10;
+    return isPortableExecutable ? Math.min(6, matchCount * 2) : 8;
   }
 
   if (indicator?.category === 'packer') {
-    return isPortableExecutable ? 14 : 10;
+    return isPortableExecutable ? 8 : 6;
   }
 
-  return indicator?.severity === 'critical' ? 20 : 8;
+  return indicator?.severity === 'critical' ? 12 : 4;
 }
 
 function scoreEvasionResult(evasionResult, isPortableExecutable) {
@@ -68,7 +69,7 @@ function scoreEvasionResult(evasionResult, isPortableExecutable) {
     0,
   );
 
-  return Math.min(score, isPortableExecutable ? 32 : 50);
+  return Math.min(score, isPortableExecutable ? 22 : 36);
 }
 
 function scoreInjectionResult(injectionResult, isPortableExecutable) {
@@ -76,23 +77,20 @@ function scoreInjectionResult(injectionResult, isPortableExecutable) {
     return 0;
   }
 
-  if (!isPortableExecutable) {
-    return Number(injectionResult.riskContribution || 0);
-  }
-
-  const largeCaves = (injectionResult.codeCaves || []).filter((c) => c.size > 4096).length;
+  const largeCaves = (injectionResult.codeCaves || []).filter((c) => c.size > (isPortableExecutable ? 16384 : 4096)).length;
   const veryLargeCaves = (injectionResult.codeCaves || []).filter((c) => c.size > 65536).length;
   const appendedPayloads = isPortableExecutable ? 0 : (injectionResult.appendedPayloads || []).length;
   const polyglot = (injectionResult.polyglot || []).length;
 
-  // PE files often contain null padding and alignment gaps. Score only large
-  // cave clusters lightly unless there is an appended payload or polyglot clue.
+  // PE files often contain null padding and alignment gaps. Score only very
+  // large cave clusters lightly; non-PE payloads need stronger structure before
+  // they become review-worthy.
   return Math.min(
-    veryLargeCaves * 8
-    + largeCaves * 3
-    + appendedPayloads * 25
-    + polyglot * 15,
-    35,
+    veryLargeCaves * (isPortableExecutable ? 5 : 8)
+    + largeCaves * (isPortableExecutable ? 2 : 5)
+    + appendedPayloads * 18
+    + polyglot * 12,
+    isPortableExecutable ? 18 : 30,
   );
 }
 
@@ -112,7 +110,7 @@ function scorePeAnomalies(peResult) {
  * @param {ScoringInput} input
  * @returns {{ score: number, verdict: string, reasons: string[], breakdown: Object }}
  */
-function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injectionResult, peResult }) {
+function computeHeuristicScore({ hexMatches, evasionResult, injectionResult, peResult } = {}) {
   let score = 0;
   const reasons = [];
   const evasionIndicators = Array.isArray(evasionResult?.indicators) ? evasionResult.indicators : [];
@@ -121,7 +119,6 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
   const polyglot = Array.isArray(injectionResult?.polyglot) ? injectionResult.polyglot : [];
   const breakdown = {
     hexSignatures: 0,
-    entropy: 0,
     evasion: 0,
     injection: 0,
     pe: 0,
@@ -150,26 +147,6 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
   }
 
   // ─── Contribuție entropie ──────────────────────────────────────────────────
-  if (entropyResult) {
-    let entropyScore = 0;
-
-    if (entropyResult.verdict === 'likely_encrypted_or_packed') {
-      entropyScore = 25;
-      reasons.push(`Very high Shannon entropy (${entropyResult.overall}/8.0) - likely encrypted or packed`);
-    } else if (entropyResult.verdict === 'suspicious_high_entropy') {
-      entropyScore = 10;
-      reasons.push(`High Shannon entropy (${entropyResult.overall}/8.0)`);
-    }
-
-    if (entropyResult.highEntropyRatio > 0.6) {
-      entropyScore += 10;
-      reasons.push(`${Math.round(entropyResult.highEntropyRatio * 100)}% of blocks have entropy > 7.0`);
-    }
-
-    score += Math.min(entropyScore, 30);
-    breakdown.entropy = Math.min(entropyScore, 30);
-  }
-
   // ─── Contribuție detecție evaziune ────────────────────────────────────────
   if (evasionResult) {
     const evasionScore = scoreEvasionResult(evasionResult, isPortableExecutable);
@@ -177,7 +154,7 @@ function computeHeuristicScore({ hexMatches, entropyResult, evasionResult, injec
     breakdown.evasion = evasionScore;
 
     for (const ind of evasionIndicators) {
-      if (ind.category === 'dangerous_imports') {
+      if (ind.category === 'dangerous_imports' && (!isPortableExecutable || ind.matches.length >= 4)) {
         reasons.push(`${ind.matches.length} dual-use API import(s) (injection/network/keylogging)`);
       }
       if (ind.category === 'anti_debug') {

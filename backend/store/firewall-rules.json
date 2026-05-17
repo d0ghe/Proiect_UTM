@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "action": "BLOCK",
+    "protocol": "TCP",
+    "port": 22,
+    "ip": "Any",
+    "status": "Active",
+    "desc": "Block remote SSH access",
+    "osApplied": false,
+    "osMessage": "",
+    "createdAt": "2026-05-16T16:01:47.991Z"
+  },
+  {
+    "id": 2,
+    "action": "ALLOW",
+    "protocol": "TCP",
+    "port": 80,
+    "ip": "Any",
+    "status": "Active",
+    "desc": "Allow HTTP traffic",
+    "osApplied": false,
+    "osMessage": "",
+    "createdAt": "2026-05-16T16:01:47.991Z"
+  },
+  {
+    "id": 3,
+    "action": "ALLOW",
+    "protocol": "TCP",
+    "port": 443,
+    "ip": "Any",
+    "status": "Active",
+    "desc": "Allow HTTPS traffic",
+    "osApplied": false,
+    "osMessage": "",
+    "createdAt": "2026-05-16T16:01:47.991Z"
+  },
+  {
+    "id": 4,
+    "action": "ALLOW",
+    "protocol": "UDP",
+    "port": 53,
+    "ip": "Any",
+    "status": "Active",
+    "desc": "Allow DNS lookups",
+    "osApplied": false,
+    "osMessage": "",
+    "createdAt": "2026-05-16T16:01:47.991Z"
+  }
+]

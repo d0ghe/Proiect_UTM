@@ -125,12 +125,14 @@ body::before { display: none !important; }
   border-bottom: 1px solid var(--border) !important;
   display: flex !important;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-start !important;
+  gap: 12px;
 }
 
 .brand-mark {
   width: 34px !important;
   height: 34px !important;
+  flex: 0 0 34px !important;
   background: transparent !important;
   border-radius: 0 !important;
   border: none !important;
@@ -139,7 +141,7 @@ body::before { display: none !important; }
   justify-content: center;
   color: #fff !important;
   font-size: 13px !important;
-  box-shadow: 0 0 18px rgba(0, 216, 255, 0.16) !important;
+  box-shadow: none !important;
 }
 
 .brand-icon {
@@ -147,6 +149,14 @@ body::before { display: none !important; }
   height: 100% !important;
   display: block !important;
   object-fit: contain !important;
+  background: transparent !important;
+}
+
+.brand-copy {
+  display: flex !important;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .brand-label {
@@ -989,25 +999,6 @@ select:focus {
 .deep-chip--warning { background: var(--warning-bg) !important; color: var(--warning) !important; border-color: var(--warning-border) !important; }
 .deep-chip--info { background: var(--accent-bg) !important; color: var(--accent) !important; border-color: var(--accent-border) !important; }
 
-.deep-card__sparkline {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 38px;
-  padding: 4px 0;
-}
-
-.deep-spark-bar {
-  flex: 1;
-  background: var(--accent) !important;
-  min-width: 3px;
-  border-radius: 1px;
-  opacity: 0.5;
-}
-
-.deep-spark-bar--warm { background: var(--warning) !important; opacity: 0.65; }
-.deep-spark-bar--hot { background: var(--danger) !important; opacity: 0.8; }
-
 /* ─── MITRE ────────────────────────────────────────────────────────────── */
 .mitre-matrix {
   display: grid;
@@ -1604,25 +1595,6 @@ input[type="checkbox"], input[type="radio"] {
   gap: 6px;
 }
 
-/* ─── Heatmap ──────────────────────────────────────────────────────────── */
-.heatmap-row {
-  background: var(--bg-base) !important;
-  border-radius: var(--radius) !important;
-  padding: 12px !important;
-  border: 1px solid var(--border);
-  margin-top: 12px;
-}
-
-.entropy-heatmap__legend {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-  color: var(--txt-muted);
-  margin-top: 6px;
-  padding: 0 4px;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ─── Rules editor result ──────────────────────────────────────────────── */
 .rules-result { margin-top: 14px; }
 
@@ -2080,7 +2052,7 @@ body { background-image: none !important; }
 .brand-mark {
   background: transparent !important;
   background-image: none !important;
-  box-shadow: 0 0 18px rgba(0, 216, 255, 0.16) !important;
+  box-shadow: none !important;
   color: #fff !important;
 }
 
@@ -2142,8 +2114,6 @@ body,
 .deep-analysis,
 .deep-analysis__grid,
 .deep-card,
-.heatmap-row,
-.entropy-heatmap,
 .ioc-block,
 .pe-block,
 .analysis-inline-grid,
@@ -2155,7 +2125,6 @@ body,
 .panel-card,
 .analysis-result-card,
 .deep-analysis,
-.heatmap-row,
 .ioc-block,
 .pe-block,
 .analysis-inline-grid,
@@ -2298,11 +2267,6 @@ body,
   overflow-wrap: anywhere;
 }
 
-.deep-card__sparkline,
-.entropy-heatmap canvas {
-  max-width: 100%;
-}
-
 .ioc-block code,
 .pe-block code,
 .pe-section code,
@@ -2340,7 +2304,6 @@ body,
 
   .analysis-result-main > .provider-chip-row,
   .analysis-result-main > .hex-match-row,
-  .analysis-result-main > .heatmap-row,
   .analysis-result-main > .ioc-block,
   .analysis-result-main > .form-actions,
   .analysis-result-main > .deep-analysis,

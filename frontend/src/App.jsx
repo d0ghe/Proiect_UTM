@@ -17,7 +17,7 @@ import {
 
 const POLL_INTERVAL = 8000;
 const APP_NAME = 'Argus';
-const APP_TAGLINE = 'endpoint defense command layer';
+const APP_TAGLINE = 'endpoint defense';
 const prefersDirectApi = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE_CANDIDATES = Array.from(new Set([
   import.meta.env.VITE_API_BASE_URL,
@@ -33,18 +33,17 @@ const NAV_ITEMS = [
   { id: 'filtering', label: 'Filtering', icon: 'funnel' },
   { id: 'protection', label: 'Protection', icon: 'activity' },
   { id: 'mitre', label: 'MITRE ATT&CK', icon: 'crosshair' },
-  { id: 'telemetry', label: 'Telemetry', icon: 'diagram-3' },
-  { id: 'events', label: 'Events', icon: 'terminal' },
-  { id: 'geoblocking', label: 'Geo-Block', icon: 'globe2' },
+  { id: 'geoblocking', label: 'Geo Tracking', icon: 'globe2' },
   { id: 'memory', label: 'Memory Scan', icon: 'cpu' },
   { id: 'intel', label: 'Threat Intel', icon: 'shield-check' },
+  { id: 'events', label: 'Events', icon: 'terminal' },
   { id: 'controls', label: 'Controls', icon: 'sliders' },
 ];
 
 const CONTROL_META = [
   { key: 'firewallEnabled', label: 'Firewall', copy: 'Enable or pause rule enforcement across the local packet filter.' },
   { key: 'protectionEnabled', label: 'Protection', copy: 'Keep malware scanning and quarantine activity available to operators.' },
-  { key: 'telemetryEnabled', label: 'Telemetry', copy: 'Allow the dashboard and telemetry page to collect live system metrics.' },
+  { key: 'telemetryEnabled', label: 'Telemetry', copy: 'Allow the dashboard to collect live system metrics.' },
   { key: 'eventsEnabled', label: 'Events', copy: 'Continue collecting operational events from scans and control changes.' },
   { key: 'maintenanceMode', label: 'Maintenance Mode', copy: 'Use a reduced-noise operating mode during maintenance windows.' },
 ];
@@ -498,6 +497,78 @@ function DataPair({ label, value }) {
   );
 }
 
+function TelemetryDetailPanels({ data, error, loading }) {
+  const telemetry = data || {};
+  const hasTelemetry = Boolean(data);
+
+  return (
+    <>
+      <div className="panel-grid panel-grid--stats">
+        <StatCard accent="neutral" label="Platform" value={formatDisplay(telemetry.platform)} />
+        <StatCard accent="blue" label="CPU Usage" value={formatPercent(telemetry.cpu_percent)} />
+        <StatCard accent="blue" label="RAM Usage" value={formatPercent(telemetry.ram_percent)} />
+        <StatCard accent="neutral" label="Uptime" value={formatDisplay(telemetry.uptime, '0')} />
+      </div>
+
+      {error ? <p className="form-message form-message--error">{error}</p> : null}
+      {loading && !hasTelemetry ? <EmptyState text="Loading telemetry..." /> : null}
+
+      {hasTelemetry ? (
+        <div className="panel-grid panel-grid--triple">
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Compute</p>
+                <h3>CPU Profile</h3>
+              </div>
+            </div>
+            <div className="detail-grid">
+              <DataPair label="Model" value={formatDisplay(telemetry.cpu?.model)} />
+              <DataPair label="Cores" value={formatInteger(telemetry.cpu?.cores)} />
+              <DataPair label="Physical" value={formatInteger(telemetry.cpu?.physicalCores)} />
+              <DataPair label="Load" value={formatPercent(telemetry.cpu?.load ?? telemetry.cpu_percent)} />
+              <DataPair label="Uptime" value={formatDisplay(telemetry.uptime)} />
+            </div>
+          </section>
+
+          <section className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Memory</p>
+                <h3>RAM Consumption</h3>
+              </div>
+            </div>
+            <div className="detail-grid">
+              <DataPair label="Used" value={formatGigabytes(telemetry.ram?.used)} />
+              <DataPair label="Total" value={formatGigabytes(telemetry.ram?.total)} />
+              <DataPair label="Percent" value={formatPercent(telemetry.ram?.percent ?? telemetry.ram_percent)} />
+            </div>
+          </section>
+
+          <section className="panel-card panel-card--wide">
+            <div className="panel-card__header">
+              <div>
+                <p className="panel-kicker">Host Runtime</p>
+                <h3>Interface Snapshot</h3>
+              </div>
+            </div>
+            <div className="detail-grid detail-grid--wide">
+              <DataPair label="Platform" value={formatDisplay(telemetry.platform)} />
+              <DataPair label="Version" value={formatPlatformVersion(telemetry.os)} />
+              <DataPair label="Build" value={formatDisplay(telemetry.os?.build, 'Unavailable')} />
+              <DataPair label="Interface" value={formatDisplay(telemetry.network?.iface)} />
+              <DataPair label="RX Rate" value={formatRate(telemetry.rx_rate ?? telemetry.network?.rxRate)} />
+              <DataPair label="TX Rate" value={formatRate(telemetry.tx_rate ?? telemetry.network?.txRate)} />
+              <DataPair label="Connected Clients" value={formatInteger(telemetry.connected_clients)} />
+              <DataPair label="Incoming Packets" value={formatInteger(telemetry.packets?.rxPackets)} />
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function Sidebar({ active, onNavigate }) {
   return (
     <aside className="control-sidebar">
@@ -531,11 +602,12 @@ function Sidebar({ active, onNavigate }) {
   );
 }
 
-function Dashboard({ data, onNavigate, onRefresh }) {
+function Dashboard({ data, onNavigate, onRefresh, onTelemetryRefresh, telemetryData, telemetryError, telemetryLoading }) {
   const controls = data?.controls || {};
   const maintenanceMode = Boolean(controls.maintenanceMode);
   const protectionStatus = formatDisplay(data?.antivirus, 'Protected');
   const activeControls = Object.entries(controls).filter(([key, value]) => key !== 'maintenanceMode' && value === true).length;
+  const telemetrySnapshot = telemetryData || data;
   const [exporting, setExporting] = useState(false);
 
   async function handleExportPdf() {
@@ -599,17 +671,37 @@ function Dashboard({ data, onNavigate, onRefresh }) {
         />
       </div>
 
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading">
+          <div>
+            <p className="panel-kicker">Telemetry</p>
+            <h2>Live Host Runtime</h2>
+          </div>
+          <button className="control-btn control-btn--ghost" onClick={onTelemetryRefresh || onRefresh} type="button">
+            Refresh Telemetry
+          </button>
+        </div>
+        <TelemetryDetailPanels data={telemetrySnapshot} error={telemetryError} loading={telemetryLoading} />
+      </section>
+
+      <div className="dashboard-section-heading">
+        <div>
+          <p className="panel-kicker">Command Center</p>
+          <h2>Modules</h2>
+        </div>
+      </div>
+
       <div className="module-grid">
-        <ModuleCard title="Telemetry" tag="TEL-01" status="Live" action="Open Telemetry" onAction={() => onNavigate('telemetry')}>
+        <ModuleCard title="Telemetry" tag="TEL-01" status={telemetryLoading ? 'Loading' : 'Live'} action="Refresh" onAction={onTelemetryRefresh || onRefresh}>
           <p className="module-desc">
             Real-time host metrics gathered from the local backend, focused on values this machine exposes reliably.
           </p>
           <div className="telemetry-grid">
-            <TelemetryCard label="CPU" value={formatPercent(data?.cpu_percent)} />
-            <TelemetryCard label="RAM" value={formatPercent(data?.ram_percent)} />
-            <TelemetryCard label="RX Rate" value={formatRate(data?.rx_rate)} />
-            <TelemetryCard label="TX Rate" value={formatRate(data?.tx_rate)} />
-            <TelemetryCard label="Clients" value={formatInteger(data?.connected_clients)} />
+            <TelemetryCard label="CPU" value={formatPercent(telemetrySnapshot?.cpu_percent)} />
+            <TelemetryCard label="RAM" value={formatPercent(telemetrySnapshot?.ram_percent)} />
+            <TelemetryCard label="RX Rate" value={formatRate(telemetrySnapshot?.rx_rate ?? telemetrySnapshot?.network?.rxRate)} />
+            <TelemetryCard label="TX Rate" value={formatRate(telemetrySnapshot?.tx_rate ?? telemetrySnapshot?.network?.txRate)} />
+            <TelemetryCard label="Clients" value={formatInteger(telemetrySnapshot?.connected_clients)} />
           </div>
         </ModuleCard>
 
@@ -984,8 +1076,8 @@ function DeepAnalysisPanel({ deepAnalysis }) {
     return null;
   }
 
-  const { entropyResult, evasionResult, injectionResult, heuristicScore } = deepAnalysis;
-  if (!entropyResult && !evasionResult && !injectionResult && !heuristicScore) {
+  const { evasionResult, injectionResult, heuristicScore } = deepAnalysis;
+  if (!evasionResult && !injectionResult && !heuristicScore) {
     return null;
   }
 
@@ -1008,7 +1100,7 @@ function DeepAnalysisPanel({ deepAnalysis }) {
   return (
     <div className="deep-analysis">
       <div className="deep-analysis__header">
-        <span className="panel-kicker">Deep Analysis (4-Layer Heuristic Engine)</span>
+        <span className="panel-kicker">Deep Analysis (3-Layer Heuristic Engine)</span>
         <div className={`deep-score ${verdictClass}`}>
           <strong>{score}/100</strong>
           <span>{verdict.replace('_', ' ')}</span>
@@ -1032,33 +1124,9 @@ function DeepAnalysisPanel({ deepAnalysis }) {
           )}
         </div>
 
-        {/* MODUL 2: Entropy / Behavioral Analysis */}
+        {/* MODUL 2: Evasion Technique Detection */}
         <div className="deep-card">
-          <p className="deep-card__title">2. Entropy / Behavioral</p>
-          <p className="deep-card__metric">
-            {entropyResult?.overall?.toFixed(2) ?? '0.00'}<span>/8.00</span>
-          </p>
-          <p className="deep-card__verdict">
-            {entropyResult?.verdict?.replace(/_/g, ' ') || 'normal'}
-          </p>
-          <div className="deep-card__sparkline">
-            {(entropyResult?.blocks || []).slice(0, 32).map((block, idx) => (
-              <span
-                key={`bar-${idx}`}
-                className={`deep-spark-bar ${block.entropy > 7 ? 'deep-spark-bar--hot' : block.entropy > 5 ? 'deep-spark-bar--warm' : ''}`}
-                style={{ height: `${Math.max(2, block.entropy * 5)}px` }}
-                title={`Block @${block.offsetHex} — entropy ${block.entropy}`}
-              />
-            ))}
-          </div>
-          <p className="deep-card__note">
-            {Math.round((entropyResult?.highEntropyRatio || 0) * 100)}% of blocks have entropy &gt; 7.0
-          </p>
-        </div>
-
-        {/* MODUL 3: Evasion Technique Detection */}
-        <div className="deep-card">
-          <p className="deep-card__title">3. Evasion Detection</p>
+          <p className="deep-card__title">2. Evasion Detection</p>
           <p className="deep-card__metric">{indicators.length}<span> indicator{indicators.length === 1 ? '' : 's'}</span></p>
           {indicators.length > 0 ? (
             <div className="deep-card__chips">
@@ -1077,9 +1145,9 @@ function DeepAnalysisPanel({ deepAnalysis }) {
           )}
         </div>
 
-        {/* MODUL 4: Sub-byte Injection Detection */}
+        {/* MODUL 3: Sub-byte Injection Detection */}
         <div className="deep-card">
-          <p className="deep-card__title">4. Sub-byte Injection</p>
+          <p className="deep-card__title">3. Sub-byte Injection</p>
           <p className="deep-card__metric">
             {codeCaves.length + appended.length + polyglot.length}<span> hit{codeCaves.length + appended.length + polyglot.length === 1 ? '' : 's'}</span>
           </p>
@@ -1594,8 +1662,6 @@ function ProtectionPage({ data, onPollAnalysis, onRefresh, onRunSelfTest, onScan
 }
 
 function TelemetryPage({ data, error, loading, onRefresh }) {
-  const telemetry = data || {};
-
   return (
     <div className="page-content">
       <PageHeader
@@ -1609,68 +1675,7 @@ function TelemetryPage({ data, error, loading, onRefresh }) {
         )}
       />
 
-      <div className="panel-grid panel-grid--stats">
-        <StatCard accent="neutral" label="Platform" value={formatDisplay(telemetry.platform)} />
-        <StatCard accent="blue" label="CPU Usage" value={formatPercent(telemetry.cpu_percent)} />
-        <StatCard accent="blue" label="RAM Usage" value={formatPercent(telemetry.ram_percent)} />
-        <StatCard accent="neutral" label="Uptime" value={formatDisplay(telemetry.uptime, '0')} />
-      </div>
-
-      {error ? <p className="form-message form-message--error">{error}</p> : null}
-      {loading && !data ? <EmptyState text="Loading telemetry..." /> : null}
-
-      {data ? (
-        <div className="panel-grid panel-grid--triple">
-          <section className="panel-card">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Compute</p>
-                <h3>CPU Profile</h3>
-              </div>
-            </div>
-            <div className="detail-grid">
-              <DataPair label="Model" value={formatDisplay(telemetry.cpu?.model)} />
-              <DataPair label="Cores" value={formatInteger(telemetry.cpu?.cores)} />
-              <DataPair label="Physical" value={formatInteger(telemetry.cpu?.physicalCores)} />
-              <DataPair label="Load" value={formatPercent(telemetry.cpu?.load)} />
-              <DataPair label="Uptime" value={formatDisplay(telemetry.uptime)} />
-            </div>
-          </section>
-
-          <section className="panel-card">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Memory</p>
-                <h3>RAM Consumption</h3>
-              </div>
-            </div>
-            <div className="detail-grid">
-              <DataPair label="Used" value={formatGigabytes(telemetry.ram?.used)} />
-              <DataPair label="Total" value={formatGigabytes(telemetry.ram?.total)} />
-              <DataPair label="Percent" value={formatPercent(telemetry.ram?.percent)} />
-            </div>
-          </section>
-
-          <section className="panel-card panel-card--wide">
-            <div className="panel-card__header">
-              <div>
-                <p className="panel-kicker">Host Runtime</p>
-                <h3>Interface Snapshot</h3>
-              </div>
-            </div>
-            <div className="detail-grid detail-grid--wide">
-              <DataPair label="Platform" value={formatDisplay(telemetry.platform)} />
-              <DataPair label="Version" value={formatPlatformVersion(telemetry.os)} />
-              <DataPair label="Build" value={formatDisplay(telemetry.os?.build, 'Unavailable')} />
-              <DataPair label="Interface" value={formatDisplay(telemetry.network?.iface)} />
-              <DataPair label="RX Rate" value={formatRate(telemetry.rx_rate ?? telemetry.network?.rxRate)} />
-              <DataPair label="TX Rate" value={formatRate(telemetry.tx_rate ?? telemetry.network?.txRate)} />
-              <DataPair label="Connected Clients" value={formatInteger(telemetry.connected_clients)} />
-              <DataPair label="Incoming Packets" value={formatInteger(telemetry.packets?.rxPackets)} />
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <TelemetryDetailPanels data={data} error={error} loading={loading} />
     </div>
   );
 }
@@ -1715,7 +1720,7 @@ function PlatformPage({ data, error, loading, onRefresh }) {
             <section className="panel-card">
               <div className="panel-card__header">
                 <div>
-                  <p className="panel-kicker">Host Identity</p>
+                  <p className="panel-kicker"></p>
                   <h3>Operating System</h3>
                 </div>
               </div>
@@ -1734,7 +1739,7 @@ function PlatformPage({ data, error, loading, onRefresh }) {
             <section className="panel-card">
               <div className="panel-card__header">
                 <div>
-                  <p className="panel-kicker">Mini Wireshark</p>
+                  <p className="panel-kicker"></p>
                   <h3>Packet Monitor</h3>
                 </div>
               </div>
@@ -1756,7 +1761,7 @@ function PlatformPage({ data, error, loading, onRefresh }) {
           <section className="panel-card">
             <div className="panel-card__header">
               <div>
-                <p className="panel-kicker">Mini Wireshark</p>
+                <p className="panel-kicker"></p>
                 <h3>Connection Monitor</h3>
               </div>
             </div>
@@ -2032,30 +2037,11 @@ const COUNTRY_COORDS_UI = {
   GE:[43.4,42.3],
 };
 
-const COUNTRY_LIST = [
-  { code: 'CN', name: 'China' }, { code: 'RU', name: 'Russia' }, { code: 'KP', name: 'North Korea' },
-  { code: 'IR', name: 'Iran' }, { code: 'BY', name: 'Belarus' }, { code: 'CU', name: 'Cuba' },
-  { code: 'SY', name: 'Syria' }, { code: 'SD', name: 'Sudan' }, { code: 'MM', name: 'Myanmar' },
-  { code: 'VN', name: 'Vietnam' }, { code: 'PK', name: 'Pakistan' }, { code: 'NG', name: 'Nigeria' },
-  { code: 'IN', name: 'India' }, { code: 'BR', name: 'Brazil' }, { code: 'UA', name: 'Ukraine' },
-  { code: 'TR', name: 'Turkey' }, { code: 'ID', name: 'Indonesia' }, { code: 'EG', name: 'Egypt' },
-  { code: 'TH', name: 'Thailand' }, { code: 'PH', name: 'Philippines' }, { code: 'BD', name: 'Bangladesh' },
-  { code: 'MX', name: 'Mexico' }, { code: 'VE', name: 'Venezuela' }, { code: 'IQ', name: 'Iraq' },
-  { code: 'AF', name: 'Afghanistan' }, { code: 'LY', name: 'Libya' }, { code: 'SO', name: 'Somalia' },
-  { code: 'YE', name: 'Yemen' }, { code: 'HK', name: 'Hong Kong' }, { code: 'TW', name: 'Taiwan' },
-  { code: 'US', name: 'United States' }, { code: 'GB', name: 'United Kingdom' }, { code: 'DE', name: 'Germany' },
-  { code: 'FR', name: 'France' }, { code: 'NL', name: 'Netherlands' }, { code: 'RO', name: 'Romania' },
-  { code: 'PL', name: 'Poland' }, { code: 'KZ', name: 'Kazakhstan' },
-  { code: 'UZ', name: 'Uzbekistan' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'GE', name: 'Georgia' },
-];
-
-const UNIQUE_COUNTRY_LIST = COUNTRY_LIST.filter((c, i, arr) => arr.findIndex((x) => x.code === c.code) === i);
-
 function countryFlag(code) {
   return [...code.toUpperCase()].map((ch) => String.fromCodePoint(0x1F1E6 - 65 + ch.charCodeAt(0))).join('');
 }
 
-// Amber = geo-block, Rosu = content-filter block
+// Amber = geo tracking, red = content-filter block
 const GEO_COLOR     = '#f5a623';
 const CONTENT_COLOR = '#ff453a';
 const INBOUND_COLOR = '#64d2ff';
@@ -2072,7 +2058,7 @@ function getGeoActivityLabel(item) {
   if (item.type === 'content') return 'Content Filter';
   if (item.type === 'inbound') return 'Inbound';
   if (item.type === 'outbound') return 'Outbound';
-  return 'Geo-Block';
+  return 'Geo Tracking';
 }
 
 function getGeoActivityCoords(item) {
@@ -2109,9 +2095,9 @@ function AttackMap({ attacks, connections = [] }) {
     <div style={{ background: '#0a0a0a', border: '1px solid #1e1e1e', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
       {/* Header */}
       <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>Live Threat Map</span>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>Connection Map</span>
         <span style={{ fontSize: '0.75rem' }}>
-          <span style={{ color: GEO_COLOR, fontWeight: 600 }}>● Geo-Block</span>
+          <span style={{ color: GEO_COLOR, fontWeight: 600 }}>● Geo Tracking</span>
           <span style={{ color: '#444', margin: '0 0.5rem' }}>|</span>
           <span style={{ color: CONTENT_COLOR, fontWeight: 600 }}>● Content Filter</span>
         </span>
@@ -2201,71 +2187,52 @@ function AttackMap({ attacks, connections = [] }) {
   );
 }
 
-function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
-  const [search, setSearch] = useState('');
+function GeoFilterPage({ data, onRefresh }) {
   const [attacks, setAttacks] = useState([]);
   const [connections, setConnections] = useState([]);
   const [connectionSummary, setConnectionSummary] = useState({ total: 0, inbound: 0, outbound: 0, countries: 0, byCountry: [] });
-  const selected = new Set(data.blockedCountries || []);
+  const [activityLoading, setActivityLoading] = useState(false);
 
-  // Fetch live geo events and country-linked connections.
-  useEffect(() => {
-    async function fetchGeoActivity() {
-      try {
-        const [attackPayload, connectionPayload] = await Promise.all([
-          requestJson('/geo-filter/attacks'),
-          requestJson('/geo-filter/connections?limit=160'),
-        ]);
-        setAttacks(attackPayload?.attacks || []);
-        setConnections(connectionPayload?.items || []);
-        setConnectionSummary(connectionPayload?.summary || { total: 0, inbound: 0, outbound: 0, countries: 0, byCountry: [] });
-      } catch { /* ignore */ }
+  const fetchGeoActivity = useCallback(async () => {
+    setActivityLoading(true);
+    try {
+      const [attackPayload, connectionPayload] = await Promise.all([
+        requestJson('/geo-filter/attacks'),
+        requestJson('/geo-filter/connections?limit=160'),
+      ]);
+      setAttacks(attackPayload?.attacks || []);
+      setConnections(connectionPayload?.items || []);
+      setConnectionSummary(connectionPayload?.summary || { total: 0, inbound: 0, outbound: 0, countries: 0, byCountry: [] });
+    } catch { /* ignore */ }
+    finally {
+      setActivityLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
     fetchGeoActivity();
     const id = setInterval(fetchGeoActivity, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchGeoActivity]);
 
-  const filtered = UNIQUE_COUNTRY_LIST.filter(
-    (c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()),
-  );
-
-  function toggleCountry(code) {
-    const next = new Set(selected);
-    if (next.has(code)) next.delete(code);
-    else next.add(code);
-    onUpdate({ blockedCountries: Array.from(next) });
+  async function handleRefresh() {
+    await Promise.all([
+      fetchGeoActivity(),
+      onRefresh?.(),
+    ]);
   }
-
-  function toggleEnabled() {
-    onUpdate({ enabled: !data.enabled });
-  }
-
-  const selectedWithSource = data.blockedCountries || [];
-  const syncStatus = data.syncStatus || {};
-  const totalDomains = Object.values(syncStatus).reduce((acc, s) => acc + (s?.count || 0), 0);
-  const enforcementActive = Boolean(data.enabled && selected.size > 0);
 
   return (
     <div className="page-content">
       <PageHeader
-        breadcrumb={`${APP_NAME} / Geo-Block`}
-        title="Geographic Blocking"
-        subtitle="Block all outbound traffic associated with specific countries using community-maintained domain lists and IP geolocation."
+        breadcrumb={`${APP_NAME} / Geo Tracking`}
+        title="Geo Tracking"
+        subtitle="Track public inbound and outbound network activity on the connection map."
         action={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="control-btn control-btn--ghost" onClick={onRefresh} type="button">Refresh</button>
-            {selectedWithSource.length > 0 && (
-              <button
-                className="control-btn"
-                disabled={data.syncing}
-                onClick={onSync}
-                type="button"
-                style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}
-              >
-                {data.syncing ? 'Syncing...' : 'Sync Geo Data'}
-              </button>
-            )}
+            <button className="control-btn control-btn--ghost" disabled={activityLoading || data.loading} onClick={handleRefresh} type="button">
+              {activityLoading || data.loading ? 'Refreshing...' : 'Refresh'}
+            </button>
           </div>
         }
       />
@@ -2326,119 +2293,6 @@ function GeoFilterPage({ data, onUpdate, onRefresh, onSync }) {
           </div>
         ) : null}
       </section>
-
-      {/* Sync status banner */}
-      {selectedWithSource.length > 0 && (
-        <div style={{ marginBottom: '1rem', padding: '0.85rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px', fontSize: '0.82rem', color: '#a0a0a0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <span>
-              IP geolocation is active for every selected country. Optional domain lists: <strong style={{ color: '#e8e8e8' }}>{totalDomains.toLocaleString()} domains</strong> cached across {Object.keys(syncStatus).length} {Object.keys(syncStatus).length === 1 ? 'country' : 'countries'}.
-              {totalDomains === 0 && <span style={{ color: '#f5a623', marginLeft: '0.5rem' }}>Countries without domain lists are still enforced by IP geolocation.</span>}
-            </span>
-          </div>
-          {selectedWithSource.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.6rem' }}>
-              {selectedWithSource.map((code) => {
-                const s = syncStatus[code];
-                const hasList = s?.count > 0;
-                const hasError = s?.error && !hasList;
-                return (
-                  <span
-                    key={code}
-                    style={{
-                      padding: '0.2rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem',
-                      background: hasError ? 'rgba(255,69,58,0.12)' : hasList ? 'rgba(52,199,89,0.1)' : 'rgba(245,166,35,0.1)',
-                      border: `1px solid ${hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623'}`,
-                      color: hasError ? '#ff453a' : hasList ? '#34c759' : '#f5a623',
-                    }}
-                    title={hasError ? s.error : hasList ? `${s.count.toLocaleString()} domains synced ${new Date(s.lastSync).toLocaleString()}` : 'IP geolocation active'}
-                  >
-                    {countryFlag(code)} {code}: {hasList ? `${(s.count / 1000).toFixed(1)}k domains` : hasError ? 'error' : 'IP geo'}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Enable toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem 1.25rem', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '10px' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>
-            Geo-Filter {enforcementActive ? (
-              <span style={{ color: '#34c759' }}>Active</span>
-            ) : data.enabled ? (
-              <span style={{ color: '#f5a623' }}>No countries selected</span>
-            ) : (
-              <span style={{ color: '#636366' }}>Inactive</span>
-            )}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#636366', marginTop: '0.2rem' }}>
-            {selected.size} {selected.size === 1 ? 'country' : 'countries'} selected
-          </div>
-        </div>
-        <button
-          className={`control-btn${data.enabled ? '' : ' control-btn--ghost'}`}
-          disabled={data.saving}
-          onClick={toggleEnabled}
-          type="button"
-        >
-          {data.enabled ? 'Disable' : 'Enable'}
-        </button>
-      </div>
-
-      {/* Search */}
-      <input
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search country…"
-        style={{ width: '100%', marginBottom: '1rem', padding: '0.6rem 0.9rem', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', color: '#e8e8e8', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
-        type="text"
-        value={search}
-      />
-
-      {/* Country grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.6rem' }}>
-        {filtered.map((c) => {
-          const active = selected.has(c.code);
-          const ss = syncStatus[c.code];
-          const domainCount = ss?.count || 0;
-          return (
-            <button
-              key={c.code}
-              onClick={() => toggleCountry(c.code)}
-              disabled={data.saving}
-              type="button"
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.6rem',
-                padding: '0.6rem 0.9rem', borderRadius: '8px', cursor: 'pointer',
-                background: active ? 'rgba(255,69,58,0.12)' : '#141414',
-                border: `1px solid ${active ? '#ff453a' : '#2a2a2a'}`,
-                color: active ? '#ff453a' : '#e8e8e8',
-                fontWeight: active ? 600 : 400, fontSize: '0.85rem',
-                textAlign: 'left', transition: 'all 0.15s',
-              }}
-            >
-              <span style={{ fontSize: '1.2rem' }}>{countryFlag(c.code)}</span>
-              <span style={{ flex: 1 }}>{c.name}</span>
-              <span style={{ fontSize: '0.7rem', opacity: 0.5 }}>{c.code}</span>
-              {active && (
-                <span
-                  style={{
-                    fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '3px',
-                    background: domainCount > 0 ? 'rgba(52,199,89,0.15)' : 'rgba(245,166,35,0.15)',
-                    color: domainCount > 0 ? '#34c759' : '#f5a623',
-                    border: `1px solid ${domainCount > 0 ? '#34c759' : '#f5a623'}`,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {domainCount > 0 ? `${(domainCount / 1000).toFixed(0)}k` : 'IP geo'}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -2476,7 +2330,7 @@ export default function App() {
     lastResult: null,
   });
   const [eventsData, setEventsData] = useState({ events: [], loading: false, error: '' });
-  const [mitreData, setMitreData] = useState({ matrix: [], intel: null, heatmap: null, loading: false });
+  const [mitreData, setMitreData] = useState({ matrix: [], intel: null, memoryScan: null, loading: false });
   const [memoryData, setMemoryData] = useState({ lastScan: null, loading: false, error: '' });
   const [intelData, setIntelData] = useState({ intel: null, loading: false });
   const [honeypotsData, setHoneypotsData] = useState({ canaries: [], events: [], loading: false });
@@ -2594,6 +2448,10 @@ export default function App() {
     }
   }, []);
 
+  const refreshDashboard = useCallback(async () => {
+    await Promise.all([fetchDashboard(), loadTelemetry()]);
+  }, [fetchDashboard, loadTelemetry]);
+
   const loadCleanup = useCallback(async () => {
     setCleanupData((current) => ({ ...current, loading: true, error: '' }));
     try {
@@ -2622,12 +2480,12 @@ export default function App() {
   const loadMitre = useCallback(async () => {
     setMitreData((current) => ({ ...current, loading: true }));
     try {
-      const [matrixRes, intelRes, heatmapRes] = await Promise.all([
+      const [matrixRes, intelRes, memoryRes] = await Promise.all([
         requestJson('/intel/mitre/matrix'),
         requestJson('/intel/intel/dashboard'),
-        requestJson('/intel/intel/mitre-heatmap').catch(() => null),
+        requestJson('/memory/last').catch(() => null),
       ]);
-      setMitreData({ matrix: matrixRes?.tactics || [], intel: intelRes?.intel || null, heatmap: heatmapRes?.heatmap || null, loading: false });
+      setMitreData({ matrix: matrixRes?.tactics || [], intel: intelRes?.intel || null, memoryScan: memoryRes?.lastScan || null, loading: false });
     } catch {
       setMitreData((c) => ({ ...c, loading: false }));
     }
@@ -2992,45 +2850,16 @@ export default function App() {
   const loadGeoFilter = useCallback(async () => {
     setGeoFilterData((c) => ({ ...c, loading: true, error: '' }));
     try {
-      const [payload, statusPayload] = await Promise.all([
-        requestJson('/geo-filter'),
-        requestJson('/geo-filter/sync-status').catch(() => null),
-      ]);
-      setGeoFilterData((c) => ({
-        ...c,
-        enabled: Boolean(payload?.enabled),
-        blockedCountries: payload?.blockedCountries || [],
-        syncStatus: statusPayload?.status || payload?.syncStatus || c.syncStatus,
-        loading: false,
-      }));
-    } catch (err) {
-      setGeoFilterData((c) => ({ ...c, loading: false, error: err.message }));
-    }
-  }, []);
-
-  const handleUpdateGeoFilter = useCallback(async (patch) => {
-    setGeoFilterData((c) => ({ ...c, saving: true, error: '' }));
-    try {
-      const payload = await requestJson('/geo-filter', { method: 'PATCH', body: JSON.stringify(patch) });
+      const payload = await requestJson('/geo-filter');
       setGeoFilterData((c) => ({
         ...c,
         enabled: Boolean(payload?.enabled),
         blockedCountries: payload?.blockedCountries || [],
         syncStatus: payload?.syncStatus || c.syncStatus,
-        saving: false,
+        loading: false,
       }));
     } catch (err) {
-      setGeoFilterData((c) => ({ ...c, saving: false, error: err.message }));
-    }
-  }, []);
-
-  const handleSyncGeoFilter = useCallback(async () => {
-    setGeoFilterData((c) => ({ ...c, syncing: true, error: '' }));
-    try {
-      const payload = await requestJson('/geo-filter/sync', { method: 'POST' });
-      setGeoFilterData((c) => ({ ...c, syncing: false, syncStatus: payload?.results || {} }));
-    } catch (err) {
-      setGeoFilterData((c) => ({ ...c, syncing: false, error: err.message }));
+      setGeoFilterData((c) => ({ ...c, loading: false, error: err.message }));
     }
   }, []);
 
@@ -3070,7 +2899,7 @@ export default function App() {
       loadProtection();
     }
 
-    if (activePage === 'telemetry' || activePage === 'platform') {
+    if (activePage === 'dashboard' || activePage === 'telemetry' || activePage === 'platform') {
       loadTelemetry();
     }
 
@@ -3135,8 +2964,18 @@ export default function App() {
 
         {connStatus === 'connecting' ? <div className="conn-banner conn-banner--info">Connecting to backend...</div> : null}
         <LiveAlertsBanner alerts={liveAlerts} />
-        {activePage === 'dashboard' ? <Dashboard data={serverData} onNavigate={setActivePage} onRefresh={fetchDashboard} /> : null}
-        {activePage === 'mitre' ? <MitrePage matrix={mitreData.matrix} intel={mitreData.intel} heatmap={mitreData.heatmap} loading={mitreData.loading} onRefresh={loadMitre} /> : null}
+        {activePage === 'dashboard' ? (
+          <Dashboard
+            data={serverData}
+            onNavigate={setActivePage}
+            onRefresh={refreshDashboard}
+            onTelemetryRefresh={loadTelemetry}
+            telemetryData={telemetryData.data}
+            telemetryError={telemetryData.error}
+            telemetryLoading={telemetryData.loading}
+          />
+        ) : null}
+        {activePage === 'mitre' ? <MitrePage matrix={mitreData.matrix} intel={mitreData.intel} memoryScan={mitreData.memoryScan} loading={mitreData.loading} onRefresh={loadMitre} /> : null}
         {activePage === 'memory' ? <MemoryScanPage data={memoryData} loading={memoryData.loading} onScan={handleMemoryScan} /> : null}
         {activePage === 'intel' ? <ThreatIntelPage intel={intelData.intel} loading={intelData.loading} onRefresh={loadIntel} onReset={handleResetIntel} /> : null}
         {activePage === 'honeypots' ? <HoneypotsPage data={honeypotsData} loading={honeypotsData.loading} onRefresh={loadHoneypots} onPlant={handlePlantHoneypots} onCheck={handleCheckHoneypots} onRemove={handleRemoveAllHoneypots} /> : null}
@@ -3196,7 +3035,7 @@ export default function App() {
         ) : null}
         {activePage === 'events' ? <EventsPage data={eventsData.events} error={eventsData.error} loading={eventsData.loading} onRefresh={loadEvents} /> : null}
         {activePage === 'geoblocking' ? (
-          <GeoFilterPage data={geoFilterData} onUpdate={handleUpdateGeoFilter} onRefresh={loadGeoFilter} onSync={handleSyncGeoFilter} />
+          <GeoFilterPage data={geoFilterData} onRefresh={loadGeoFilter} />
         ) : null}
         {activePage === 'controls' ? (
           <ControlsPage

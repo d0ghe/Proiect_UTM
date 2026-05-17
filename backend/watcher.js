@@ -5,7 +5,6 @@ const crypto = require('crypto');
 const notifier = require('node-notifier');
 
 const { scanBufferForHexSignatures } = require('./utils/hexSignatures');
-const { analyzeEntropy } = require('./utils/entropyAnalysis');
 const { detectEvasion } = require('./utils/evasionDetection');
 const { detectSubbyteInjection } = require('./utils/subbyteInjection');
 const { computeHeuristicScore } = require('./utils/heuristicScorer');
@@ -125,7 +124,6 @@ async function scanFile(filePath) {
 
     // Deep heuristic pipeline (full — identical to manual scan)
     const hexResult       = scanBufferForHexSignatures(fileBuffer);
-    const entropyResult   = analyzeEntropy(fileBuffer);
     const evasionResult   = detectEvasion(fileBuffer);
     const injectionResult = detectSubbyteInjection(fileBuffer);
     const iocs            = extractIOCs(fileBuffer);
@@ -135,7 +133,6 @@ async function scanFile(filePath) {
 
     const heuristicScore = computeHeuristicScore({
       hexMatches: hexResult.matches,
-      entropyResult,
       evasionResult,
       injectionResult,
       peResult,
@@ -150,11 +147,15 @@ async function scanFile(filePath) {
       yaraCritical.length * 35 + yaraWarning.length * 10,
       isPortableExecutable ? 45 : 60,
     );
+    const decodedFindings = Array.isArray(stringDecoded.findings) ? stringDecoded.findings : [];
+    const decodedCritical = decodedFindings.filter((finding) => finding.severity === 'critical').length;
+    const decodedWarnings = decodedFindings.filter((finding) => finding.severity === 'warning').length;
+    const isScriptLike = /\.(ps1|psm1|js|jse|vbs|vbe|bat|cmd|wsf|wsh|hta|sh)$/i.test(fileName);
     const supplementalScore = Math.min(
-      (iocs.suspicionScore || 0)
-      + (stringDecoded.riskContribution || 0)
-      + (scriptResult.riskContribution || 0),
-      isPortableExecutable ? 25 : 40,
+      Math.min(iocs.suspicionScore || 0, isPortableExecutable ? 6 : 14)
+      + Math.min(decodedCritical * 12 + Math.max(0, decodedWarnings - 2) * 2, isPortableExecutable ? 6 : 12)
+      + (isPortableExecutable || !isScriptLike ? 0 : Math.min(scriptResult.riskContribution || 0, 18)),
+      isPortableExecutable ? 12 : 28,
     );
 
     heuristicScore.score = Math.min(
@@ -171,7 +172,6 @@ async function scanFile(filePath) {
     const mitreTechniques = mapToMitre({
       evasionIndicators: evasionResult.indicators,
       injectionResult,
-      entropyResult,
       iocs,
       stringDecoded: stringDecoded.findings,
       scriptObfuscation: scriptResult.findings,
@@ -185,11 +185,10 @@ async function scanFile(filePath) {
       try {
         const entries = await scanArchive(fileBuffer, fileName, async (buf, name) => {
           const h = scanBufferForHexSignatures(buf);
-          const e = analyzeEntropy(buf);
           const ev = detectEvasion(buf);
           const inj = detectSubbyteInjection(buf);
           const pe = parsePE(buf);
-          const hs = computeHeuristicScore({ hexMatches: h.matches, entropyResult: e, evasionResult: ev, injectionResult: inj, peResult: pe });
+          const hs = computeHeuristicScore({ hexMatches: h.matches, evasionResult: ev, injectionResult: inj, peResult: pe });
           const yr = runRules(buf, getRulesText());
           const archiveYaraScore = Math.min(
             yr.matched.filter((m) => m.severity === 'critical').length * 35

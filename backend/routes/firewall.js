@@ -81,7 +81,7 @@ router.post('/rules', (req, res) => {
 router.post('/relaunch-admin', (_req, res) => {
   res.json({
     success: true,
-    message: 'Platform restart is no longer required. Add or delete an active firewall rule and approve the Windows UAC prompt.',
+    message: 'Platform restart is no longer required.',
     result: {
       relaunchRequired: false,
     },
