@@ -132,6 +132,21 @@ test('memory scanner PowerShell enumerator is informational', () => {
   assert.ok(result.findings.some((finding) => finding.severity === 'info' && finding.type === 'PS_PolicyBypass'));
 });
 
+test('PowerShell process without visible parent does not crash assessment', () => {
+  const result = assessProcess({
+    ProcessId: 24,
+    Name: 'powershell.exe',
+    Path: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    CommandLine: 'powershell -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process | ConvertTo-Json"',
+    ParentProcessId: 999999,
+    WorkingSetSize: 80 * 1024 * 1024,
+  }, []);
+
+  assert.equal(result.parentName, '');
+  assert.equal(result.threat, 'SUSPICIOUS');
+  assert.ok(result.findings.some((finding) => finding.type === 'PS_PolicyBypass'));
+});
+
 test('memory scanner service enumerator is informational', () => {
   const result = assessProcess({
     ProcessId: 23,

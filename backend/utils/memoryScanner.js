@@ -120,7 +120,7 @@ function normalizeProcessName(value) {
 }
 
 function normalizeProcessPath(proc) {
-  return String(proc.Path || proc.ExecutablePath || '').trim();
+  return String(proc?.Path || proc?.ExecutablePath || '').trim();
 }
 
 function normalizeServiceInfo(service) {

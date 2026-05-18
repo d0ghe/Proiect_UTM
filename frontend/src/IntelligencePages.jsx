@@ -207,6 +207,8 @@ export function MitrePage({ matrix, intel, memoryScan, loading, onRefresh }) {
 export function MemoryScanPage({ data, loading, onScan }) {
   const result  = data?.lastScan;
   const summary = result?.summary;
+  const error = data?.error || result?.error || '';
+  const scanInProgress = loading || data?.scanning || result?.scanning;
   const [showAll, setShowAll] = useState(false);
 
   const threatColor = (t) => t === 'CRITICAL' ? '#ff453a' : t === 'SUSPICIOUS' ? '#f5a623' : '#34c759';
@@ -243,19 +245,21 @@ export function MemoryScanPage({ data, loading, onScan }) {
               </button>
             </>
           )}
-          <button className="control-btn" onClick={onScan} disabled={loading} type="button" style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}>
-            {loading ? 'Scanning…' : 'Scan Now'}
+          <button className="control-btn" onClick={onScan} disabled={scanInProgress} type="button" style={{ background: '#1c4532', borderColor: '#34c759', color: '#34c759' }}>
+            {scanInProgress ? 'Scanning...' : 'Scan Now'}
           </button>
         </div>
       </div>
 
-      {loading && (
+      {error ? <p className="form-message form-message--error">{error}</p> : null}
+
+      {scanInProgress && (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#636366', background: '#141414', borderRadius: 10, marginBottom: '1.25rem', border: '1px solid #2a2a2a' }}>
-          Enumerating processes via WMI… This takes 10-20 seconds.
+          Enumerating processes via WMI... This takes 10-20 seconds.
         </div>
       )}
 
-      {summary && !loading && (
+      {summary && !scanInProgress && (
         <>
           <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
             {[
@@ -337,7 +341,7 @@ export function MemoryScanPage({ data, loading, onScan }) {
         </>
       )}
 
-      {!summary && !loading && (
+      {!summary && !scanInProgress && !error && (
         <div style={{ padding: '3rem', textAlign: 'center', color: '#636366', background: '#141414', borderRadius: 10, border: '1px solid #2a2a2a' }}>
           Click "Scan Now" to analyze all running processes for malicious indicators.
         </div>

@@ -2492,12 +2492,22 @@ export default function App() {
   }, []);
 
   const handleMemoryScan = useCallback(async () => {
-    setMemoryData((c) => ({ ...c, loading: true, error: '' }));
+    setMemoryData((c) => ({ ...c, loading: true, scanning: true, error: '' }));
     try {
-      const payload = await requestJson('/memory/scan');
-      setMemoryData({ lastScan: payload, loading: false, error: '' });
+      const payload = await requestJson(`/memory/scan?ts=${Date.now()}`, { cache: 'no-store' });
+      if (payload?.success === false) {
+        throw new Error(payload.error || payload.message || 'Memory scan failed.');
+      }
+
+      const lastScan = payload?.summary ? payload : payload?.lastScan || null;
+      setMemoryData({
+        lastScan,
+        loading: false,
+        scanning: Boolean(payload?.scanning && !lastScan?.summary),
+        error: '',
+      });
     } catch (err) {
-      setMemoryData((c) => ({ ...c, loading: false, error: err.message }));
+      setMemoryData((c) => ({ ...c, loading: false, scanning: false, error: err.message || 'Memory scan failed.' }));
     }
   }, []);
 
