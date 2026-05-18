@@ -3,6 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 
 const { CATEGORY_IDS, setBlockedDomains } = require('../store/contentFilterStore');
+const { enableBrowserProxyAutoConfig } = require('./browserProxyManager');
 
 // Optional hardening for proxy enforcement.
 // Disabled by default because blocking all outbound UDP 443 can interrupt normal browsing.
@@ -478,6 +479,9 @@ async function applyPolicy(policy, options = {}) {
   const environment = inspectEnvironment();
   const proxyApplied = proxyEnabled && hasContent;
   const quicBlockEnabled = isQuicBlockEnabled();
+  const browserProxyConfig = proxyApplied && options.configureBrowserProxy !== false
+    ? await enableBrowserProxyAutoConfig()
+    : null;
 
   setBlockedDomains(proxyApplied ? compiled.domains : []);
 
@@ -502,6 +506,7 @@ async function applyPolicy(policy, options = {}) {
     proxyAddress: environment.proxyAddress,
     proxyPort: environment.proxyPort,
     proxyRunning: environment.proxyRunning,
+    browserProxyConfigured: browserProxyConfig?.configured ?? null,
     quicBlocked: proxyApplied && quicBlockEnabled,
     appliedDomainCount: proxyApplied ? compiled.domains.length : 0,
     proxyMessage,

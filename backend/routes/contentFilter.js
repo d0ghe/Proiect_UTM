@@ -144,6 +144,7 @@ router.post('/apply', async (req, res) => {
       proxyAddress: result.proxyAddress,
       proxyPort: result.proxyPort,
       proxyRunning: result.proxyRunning,
+      browserProxyConfigured: result.browserProxyConfigured,
       proxyMessage: result.proxyMessage,
       quicBlocked: result.quicBlocked,
       sourceStatus: result.sourceStatus,

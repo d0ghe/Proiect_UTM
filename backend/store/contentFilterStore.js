@@ -43,6 +43,7 @@ function createDefaultStore() {
       proxyAddress: '127.0.0.1:8877',
       proxyPort: 8877,
       proxyRunning: false,
+      browserProxyConfigured: null,
       proxyMessage: '',
       quicBlocked: false,
     },

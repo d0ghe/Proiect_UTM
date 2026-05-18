@@ -27,7 +27,7 @@ test('content filter applies and clears proxy cache for custom domains', async (
       categories: buildDisabledCategories(),
       customBlocklist: ['ads.example.test', 'allow.example.test'],
       allowlist: ['allow.example.test'],
-    }, { sync: false });
+    }, { sync: false, configureBrowserProxy: false });
 
     assert.equal(applied.applied, true);
     assert.equal(applied.enforcementMode, 'proxy');
@@ -100,7 +100,7 @@ test('disabled browser proxy compiles policy without enabling runtime blocking',
       categories: buildDisabledCategories(),
       customBlocklist: ['one.example.test', 'two.example.test'],
       allowlist: [],
-    }, { sync: false });
+    }, { sync: false, configureBrowserProxy: false });
 
     assert.equal(applied.applied, false);
     assert.equal(applied.enforcementMode, 'none');

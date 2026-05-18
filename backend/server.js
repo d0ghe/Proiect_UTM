@@ -1,9 +1,6 @@
 const http    = require('http');
 const cors    = require('cors');
 const express = require('express');
-const fs      = require('fs');
-const path    = require('path');
-const { exec } = require('child_process');
 
 process.on('uncaughtException',  (err) => console.error('[!] uncaughtException:', err.message));
 process.on('unhandledRejection', (err) => console.error('[!] unhandledRejection:', err?.message || err));
@@ -11,6 +8,11 @@ process.on('unhandledRejection', (err) => console.error('[!] unhandledRejection:
 const { loadRuntimeConfig }       = require('./utils/runtimeConfig');
 const { attach: attachWebSocket } = require('./utils/wsBroadcaster');
 const { initBlockedDomains, removeQuicBlock } = require('./utils/contentFilter');
+const {
+  disableBrowserProxyIfOwned,
+  enableBrowserProxyAutoConfig,
+  getBrowserProxyPacContent,
+} = require('./utils/browserProxyManager');
 const { getContentFilterState }            = require('./store/contentFilterStore');
 
 global.stats = {
@@ -31,6 +33,11 @@ app.use(express.json({ limit: '10mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, message: 'Argus backend is online.' });
+});
+
+app.get('/browser-proxy.pac', (_req, res) => {
+  res.type('application/x-ns-proxy-autoconfig; charset=utf-8');
+  res.send(getBrowserProxyPacContent());
 });
 
 app.use('/api',                require('./routes/auth'));
@@ -61,19 +68,11 @@ server.on('error', (error) => {
   process.exit(1);
 });
 
-/* ─── WinINET helpers (Chrome/Edge proxy via registry) ──────────────────── */
+/* Browser proxy helpers */
 
-const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-const BROWSER_PROXY_PORT = 8877;
-const PROXY_PAC_DIR = path.join(process.env.TEMP || process.env.TMP || __dirname, 'argus');
-const PROXY_PAC_PATH = path.join(PROXY_PAC_DIR, 'browser-proxy.pac');
 const BROWSER_PROXY_ENABLED = parseBoolean(
   process.env.CONTENT_FILTER_BROWSER_PROXY_ENABLED || process.env.CONTENT_FILTER_PROXY_ENABLED,
   true,
-);
-const BROWSER_PROXY_DIRECT_FALLBACK = parseBoolean(
-  process.env.CONTENT_FILTER_PROXY_DIRECT_FALLBACK,
-  false,
 );
 let stopBrowserProxyServer = null;
 
@@ -98,44 +97,6 @@ function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
-function run(cmd) {
-  return new Promise((resolve) => exec(cmd, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
-}
-
-function buildPacFileUrl(filePath) {
-  return `file:///${path.resolve(filePath).replace(/\\/g, '/')}`;
-}
-
-function writeBrowserProxyPac() {
-  fs.mkdirSync(PROXY_PAC_DIR, { recursive: true });
-  const externalProxyRule = BROWSER_PROXY_DIRECT_FALLBACK
-    ? `PROXY 127.0.0.1:${BROWSER_PROXY_PORT}; DIRECT`
-    : `PROXY 127.0.0.1:${BROWSER_PROXY_PORT}`;
-  const pac = `function FindProxyForURL(url, host) {
-  if (
-    isPlainHostName(host) ||
-    shExpMatch(host, "localhost") ||
-    shExpMatch(host, "127.*") ||
-    shExpMatch(host, "10.*") ||
-    shExpMatch(host, "192.168.*") ||
-    shExpMatch(host, "172.16.*") ||
-    shExpMatch(host, "172.17.*") ||
-    shExpMatch(host, "172.18.*") ||
-    shExpMatch(host, "172.19.*") ||
-    shExpMatch(host, "172.2*.*") ||
-    shExpMatch(host, "172.30.*") ||
-    shExpMatch(host, "172.31.*")
-  ) {
-    return "DIRECT";
-  }
-
-  return "${externalProxyRule}";
-}
-`;
-  fs.writeFileSync(PROXY_PAC_PATH, pac, 'utf8');
-  return buildPacFileUrl(PROXY_PAC_PATH);
-}
-
 function startBrowserProxy() {
   const { startProxy, stopProxy } = require('./utils/httpProxy');
   stopBrowserProxyServer = stopProxy;
@@ -152,85 +113,15 @@ function stopBrowserProxy(cb) {
   if (cb) cb();
 }
 
-async function enableChromeProxy() {
-  if (process.platform !== 'win32') {
-    console.log('[i] Browser proxy auto-config is only supported on Windows; skipping WinINET setup.');
-    return;
-  }
-
-  const pacUrl = writeBrowserProxyPac();
-  await Promise.all([
-    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`),
-    run(`reg add "${REG}" /v AutoConfigURL /t REG_SZ /d "${pacUrl}" /f`),
-    run(`reg delete "${REG}" /v ProxyServer /f`),
-    run(`reg delete "${REG}" /v ProxyOverride /f`),
-  ]);
-  // Notifică Chrome să reîncarce setările imediat (fără restart browser)
-  const ps = [
-    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
-    `public class WI{[DllImport("wininet.dll")]`,
-    `public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';`,
-    `[WI]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)|Out-Null;`,
-    `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
-  ].join('');
-  await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
-  console.log(`[+] Browser PAC set to ${pacUrl}${BROWSER_PROXY_DIRECT_FALLBACK ? ' with DIRECT fallback' : ''}.`);
-}
-
-async function disableChromeProxy() {
-  if (process.platform !== 'win32') {
-    return;
-  }
-
-  await Promise.all([
-    run(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`),
-    run(`reg delete "${REG}" /v AutoConfigURL /f`),
-    run(`reg delete "${REG}" /v ProxyServer /f`),
-    run(`reg delete "${REG}" /v ProxyOverride /f`),
-  ]);
-  const ps = [
-    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
-    `public class WI{[DllImport("wininet.dll")]`,
-    `public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';`,
-    `[WI]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)|Out-Null;`,
-    `[WI]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)|Out-Null`,
-  ].join('');
-  await run(`powershell -NonInteractive -ExecutionPolicy Bypass -Command "${ps}"`);
-  console.log('[+] Browser proxy disabled; direct connection restored.');
-}
-
-/* ─── Startup ────────────────────────────────────────────────────────────── */
-
-async function disableChromeProxyIfOwned() {
-  if (process.platform !== 'win32') {
-    return;
-  }
-
-  const [proxyResult, pacResult] = await Promise.all([
-    run(`reg query "${REG}" /v ProxyServer`),
-    run(`reg query "${REG}" /v AutoConfigURL`),
-  ]);
-  const proxyServer = String(proxyResult.stdout || '');
-  const pacConfig = String(pacResult.stdout || '');
-  const ownedProxy = proxyServer.includes(`127.0.0.1:${BROWSER_PROXY_PORT}`)
-    || proxyServer.includes(`localhost:${BROWSER_PROXY_PORT}`)
-    || pacConfig.includes('argus')
-    || pacConfig.includes('browser-proxy.pac');
-
-  if (ownedProxy) {
-    await disableChromeProxy();
-  }
-}
-
 server.listen(PORT, async () => {
   console.log(`[+] Argus backend  ->  http://localhost:${PORT}`);
   console.log(`[+] WebSocket alerts  →  ws://localhost:${PORT}/ws/alerts`);
 
   if (BROWSER_PROXY_ENABLED) {
     startBrowserProxy();
-    await enableChromeProxy();
+    await enableBrowserProxyAutoConfig();
   } else {
-    await disableChromeProxyIfOwned();
+    await disableBrowserProxyIfOwned();
     removeQuicBlock();
     console.log('[i] Browser proxy disabled. Platform will not change system/browser proxy settings.');
   }
@@ -244,7 +135,7 @@ server.listen(PORT, async () => {
 
 async function shutdown() {
   console.log('\n[!] Stopping backend...');
-  await disableChromeProxyIfOwned();
+  await disableBrowserProxyIfOwned();
   stopBrowserProxy(() => process.exit(0));
 }
 
